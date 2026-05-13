@@ -16,7 +16,7 @@
 	branch = xEdit-4.1.x
 [submodule "jvcl"]
 	path = External/jvcl
-	url = https://github.com/ElminsterAU/jvcl.git
+	url = https://github.com/BB-84C/jvcl.git
 	branch = xEdit-4.1.x
 [submodule "DWScript"]
 	path = External/DWScript
