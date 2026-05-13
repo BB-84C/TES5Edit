@@ -31,6 +31,8 @@ object frmMain: TfrmMain
     Align = alClient
     BevelOuter = bvNone
     TabOrder = 0
+    ExplicitWidth = 1358
+    ExplicitHeight = 640
     object splElements: TSplitter
       Left = 455
       Top = 30
@@ -54,6 +56,8 @@ object frmMain: TfrmMain
         end>
       ParentFont = True
       UseSystemFont = False
+      ExplicitTop = 619
+      ExplicitWidth = 1358
     end
     object pnlRight: TPanel
       Left = 458
@@ -64,6 +68,8 @@ object frmMain: TfrmMain
       BevelOuter = bvNone
       BorderStyle = bsSingle
       TabOrder = 1
+      ExplicitWidth = 900
+      ExplicitHeight = 586
       object pgMain: TPageControl
         Left = 0
         Top = 0
@@ -75,6 +81,8 @@ object frmMain: TfrmMain
         TabOrder = 0
         TabPosition = tpBottom
         OnChange = pgMainChange
+        ExplicitWidth = 896
+        ExplicitHeight = 582
         object tbsView: TTabSheet
           Caption = 'View'
           OnShow = tbsViewShow
@@ -83,7 +91,7 @@ object frmMain: TfrmMain
             Left = 0
             Top = 25
             Width = 894
-            Height = 545
+            Height = 539
             Margins.Left = 0
             Margins.Top = 0
             Margins.Right = 0
@@ -164,6 +172,7 @@ object frmMain: TfrmMain
             Align = alTop
             BevelOuter = bvNone
             TabOrder = 1
+            ExplicitWidth = 888
             object fpnlViewFilter: TFlowPanel
               Left = 0
               Top = 0
@@ -173,6 +182,7 @@ object frmMain: TfrmMain
               BevelOuter = bvNone
               TabOrder = 0
               OnResize = fpnlViewFilterResize
+              ExplicitWidth = 822
               object bnPinned: TSpeedButton
                 Left = 0
                 Top = 0
@@ -303,6 +313,7 @@ object frmMain: TfrmMain
               Align = alRight
               BevelOuter = bvNone
               TabOrder = 1
+              ExplicitLeft = 822
               object bnLegend: TSpeedButton
                 AlignWithMargins = True
                 Left = 3
@@ -393,7 +404,7 @@ object frmMain: TfrmMain
             Left = 3
             Top = 3
             Width = 888
-            Height = 567
+            Height = 561
             Align = alClient
             BorderStyle = bsNone
             Font.Charset = ANSI_CHARSET
@@ -772,7 +783,7 @@ object frmMain: TfrmMain
             Left = 0
             Top = 0
             Width = 894
-            Height = 573
+            Height = 567
             Align = alClient
             Color = clInfoBk
             DragOperations = [doCopy]
@@ -805,6 +816,7 @@ object frmMain: TfrmMain
             OnIncrementalSearch = vstSpreadSheetIncrementalSearch
             OnInitNode = vstSpreadSheetWeaponInitNode
             OnNewText = vstSpreadSheetNewText
+            ExplicitHeight = 573
             Columns = <
               item
                 MinWidth = 150
@@ -976,7 +988,7 @@ object frmMain: TfrmMain
             Left = 0
             Top = 0
             Width = 894
-            Height = 573
+            Height = 567
             Align = alClient
             Color = clInfoBk
             DragOperations = [doCopy]
@@ -1009,6 +1021,7 @@ object frmMain: TfrmMain
             OnIncrementalSearch = vstSpreadSheetIncrementalSearch
             OnInitNode = vstSpreadSheetArmorInitNode
             OnNewText = vstSpreadSheetNewText
+            ExplicitHeight = 573
             Columns = <
               item
                 MinWidth = 150
@@ -1116,7 +1129,7 @@ object frmMain: TfrmMain
             Left = 0
             Top = 0
             Width = 894
-            Height = 573
+            Height = 567
             Align = alClient
             Color = clInfoBk
             DragOperations = [doCopy]
@@ -1149,6 +1162,7 @@ object frmMain: TfrmMain
             OnIncrementalSearch = vstSpreadSheetIncrementalSearch
             OnInitNode = vstSpreadSheetAmmoInitNode
             OnNewText = vstSpreadSheetNewText
+            ExplicitHeight = 573
             Columns = <
               item
                 MinWidth = 150
@@ -1255,6 +1269,7 @@ object frmMain: TfrmMain
       Align = alTop
       BevelOuter = bvNone
       TabOrder = 2
+      ExplicitWidth = 1358
       object bnMainMenu: TSpeedButton
         Tag = 1
         AlignWithMargins = True
@@ -1463,6 +1478,7 @@ object frmMain: TfrmMain
         TabOrder = 0
         Visible = False
         StyleElements = [seFont, seBorder]
+        ExplicitWidth = 763
       end
       object pnlBtn: TPanel
         AlignWithMargins = True
@@ -1476,6 +1492,7 @@ object frmMain: TfrmMain
         BevelOuter = bvNone
         PopupMenu = pmuBtnMenu
         TabOrder = 1
+        ExplicitLeft = 860
         object bnPayPal: TSpeedButton
           AlignWithMargins = True
           Left = 442
@@ -1986,6 +2003,7 @@ object frmMain: TfrmMain
       BevelOuter = bvNone
       TabOrder = 3
       OnResize = pnlNavResize
+      ExplicitHeight = 586
       object pnlNavContent: TPanel
         Left = 0
         Top = 0
@@ -1994,6 +2012,7 @@ object frmMain: TfrmMain
         Align = alClient
         BevelOuter = bvNone
         TabOrder = 0
+        ExplicitHeight = 586
         object lblFilterHint: TLabel
           AlignWithMargins = True
           Left = 3
@@ -2008,6 +2027,7 @@ object frmMain: TfrmMain
             'ply the filter if necessary.'
           Visible = False
           WordWrap = True
+          ExplicitWidth = 440
         end
         object vstNav: TVirtualEditTree
           Left = 0
@@ -2150,6 +2170,7 @@ object frmMain: TfrmMain
           BevelOuter = bvNone
           BevelWidth = 3
           TabOrder = 2
+          ExplicitTop = 557
           DesignSize = (
             455
             29)

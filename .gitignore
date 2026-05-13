@@ -241,3 +241,18 @@ __recovery/*
 /FO76Edit_log.txt
 Temp
 Temp/*
+AGENTS.md
+/External
+
+# Local agent workflow artifacts (per AGENTS.md, not upstream payload)
+/.opencode/
+/ROADMAP.md
+/docs/plans/
+/docs/notes/phase*-*
+/docs/notes/2026-04-*
+/docs/notes/jvinterpreter-auth-hook.md
+/.opencode
+/docs
+
+/Tools/Automation
+xEdit.err

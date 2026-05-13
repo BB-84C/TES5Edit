@@ -99,6 +99,12 @@ If you don't already have a Delphi environment, we recommend using [Delphi 12 Co
 
 If you don't have commercial [DevExpress](https://www.devexpress.com/) components, you'll need to open _BethWorkBench.groupproj_ and ensure the Build Configuration is set to `LiteDebug`.
 
+## Automation Mode (Daemon)
+
+This fork includes an opt-in daemon mode that exposes a JSON-over-named-pipe contract for non-GUI script execution and structured editing operations. Enable it by launching xEdit with `-AutomationPipe:<pipe-name>`. See [docs/notes/automation-contract/ARCHITECTURE.md](docs/notes/automation-contract/ARCHITECTURE.md) for the architectural rationale, [docs/notes/automation-contract/contract-reference.md](docs/notes/automation-contract/contract-reference.md) for the wire contract, and [docs/notes/automation-contract/COMPATIBILITY.md](docs/notes/automation-contract/COMPATIBILITY.md) for the compatibility policy.
+
+Destructive operations require `-IKnowWhatImDoing` at xEdit launch time, mirroring the existing convention for `-StripEmptyMasters` and similar destructive switches.
+
 ## xEdit versions
 
 All xEdit executable files can support all game modes. To choose which mode to use either:
