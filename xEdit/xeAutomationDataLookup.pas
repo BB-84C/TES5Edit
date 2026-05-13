@@ -1,0 +1,817 @@
+{******************************************************************************
+
+  This Source Code Form is subject to the terms of the Mozilla Public License,
+  v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+  one at https://mozilla.org/MPL/2.0/.
+
+*******************************************************************************}
+
+unit xeAutomationDataLookup;
+
+interface
+
+uses
+  wbInterface,
+  wbLoadOrder,
+  JsonDataObjects,
+  xeAutomationObjectModel;
+
+type
+  TxeAutomationMainRecords = array of IwbMainRecord;
+  TxeAutomationFiles = array of IwbFile;
+
+  TxeAutomationMainRecordSearch = record
+    Hits: TxeAutomationMainRecords;
+    Truncated: Boolean;
+    MasterOrSelf: IwbMainRecord;
+    WinningOverride: IwbMainRecord;
+  end;
+
+  TxeAutomationBoundedMainRecordSearch = record
+    Hits: TxeAutomationMainRecords;
+    Truncated: Boolean;
+  end;
+
+  TxeAutomationRecordFilter = record
+    Files: TxeAutomationFiles;
+    Signatures: TwbSignatures;
+    BaseSignatures: TwbSignatures;
+    EditorIDPattern: string;
+    DisplayNamePattern: string;
+    FullNamePattern: string;
+    BaseEditorIDPattern: string;
+    BaseDisplayNamePattern: string;
+    BaseFormID: TwbFormID;
+    HasBaseFormID: Boolean;
+    HasIsMaster: Boolean;
+    IsMaster: Boolean;
+    HasIsWinningOverride: Boolean;
+    IsWinningOverride: Boolean;
+    HasIsDeleted: Boolean;
+    IsDeleted: Boolean;
+    HasIsInjected: Boolean;
+    IsInjected: Boolean;
+    ConflictAll: TConflictAllSet;
+    UseConflictAll: Boolean;
+    ConflictThis: TConflictThisSet;
+    UseConflictThis: Boolean;
+    Limit: Integer;
+  end;
+
+function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
+function xeAutomationRequirePluginFile(const AName: string): IwbFile;
+function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
+function xeAutomationRequireFormID(const AFormID: string): TwbFormID;
+function xeAutomationGlobMatchesCI(const AValue, APattern: string): Boolean;
+function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string = ''): TxeAutomationMainRecordSearch;
+function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string = ''): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationFilterMainRecords(const AArgs: TJsonObject): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 100): Integer;
+function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationCollectNewMainRecordsInFile(const AFile: IwbFile): TxeAutomationMainRecords;
+function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
+function xeAutomationResolveOwnedMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
+function xeAutomationRequireMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+function xeAutomationRequireOwnedMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+function xeAutomationRequireElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
+function xeAutomationRequireOwnedElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
+
+implementation
+
+uses
+  System.Generics.Collections,
+  SysUtils,
+  Types,
+  JclStrings,
+  xeAutomationErrors;
+
+const
+  xeAutomationRecordSearchLimit = 100;
+
+function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
+begin
+  Result := nil;
+  if not Assigned(AModule) or not AModule^.IsValid then
+    Exit;
+
+  // Automation-created files can be registered as new/loaded modules before xEdit
+  // assigns a normal load-order index. Keep them visible to files.list, save target
+  // resolution, and duplicate checks as long as they are real plugin files.
+  Result := AModule^._File;
+  if Assigned(Result) and ((mfIsHardcoded in AModule^.miFlags) or (AModule^.miExtension = meUnknown) or Result.IsNotPlugin) then
+    Result := nil;
+end;
+
+function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
+var
+  lMasters: TJsonArray;
+  i: Integer;
+begin
+  Result := TJsonObject.Create;
+  Result.S['name'] := AFile.FileName;
+  Result.I['loadOrder'] := AFile.LoadOrder;
+  Result.S['loadOrderFileId'] := AFile.LoadOrderFileID.ToString;
+  Result.S['fileName'] := AFile.FileName;
+  Result.B['isEditable'] := AFile.IsEditable;
+  Result.B['isESM'] := AFile.IsESM;
+  Result.B['isLight'] := AFile.IsLight;
+  Result.B['isMedium'] := AFile.IsMedium;
+  Result.B['modified'] := AFile.Modified;
+  // Master-list readback is part of the file-state contract: mutation commands
+  // may report requested master handling, but callers still need the actual xEdit
+  // file state to prove no hidden self/required-master mutation occurred.
+  lMasters := Result.A['masters'];
+  for i := 0 to Pred(AFile.MasterCount[True]) do
+    lMasters.Add(AFile.Masters[i, True].FileName);
+end;
+
+function xeAutomationRequirePluginFile(const AName: string): IwbFile;
+var
+  lModule: PwbModuleInfo;
+begin
+  lModule := wbModuleByName(AName);
+  Result := nil;
+  if lModule^.IsValid then
+    Result := xeAutomationTryPluginFileFromModule(lModule);
+
+  if not Assigned(Result) then
+    raise xeAutomationNewError(
+      xeAutomationErrorFileNotFound,
+      Format('Automation file not found: %s', [AName])
+    );
+end;
+
+function xeAutomationRequireFormID(const AFormID: string): TwbFormID;
+begin
+  if AFormID = '' then
+    raise xeAutomationInvalidRequest('Automation locator must include formId');
+
+  try
+    Result := TwbFormID.FromStr(AFormID);
+  except
+    on E: Exception do
+      raise xeAutomationInvalidRequest(
+        Format('Automation locator formId must be a valid FormID: %s', [AFormID])
+      );
+  end;
+end;
+
+function xeAutomationGlobMatchesCI(const AValue, APattern: string): Boolean;
+begin
+  if APattern = '' then
+    Exit(True);
+
+  // JCL globbing is case-sensitive, so normalize both sides once here and keep the
+  // later filter commands on one shared case-insensitive wildcard contract.
+  Result := StrMatches(UpperCase(APattern), UpperCase(AValue));
+end;
+
+function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string): TxeAutomationMainRecordSearch;
+var
+  lParsedFormID: TwbFormID;
+  lModules: TwbModuleInfos;
+  lFile: IwbFile;
+  lRecord: IwbMainRecord;
+  i: Integer;
+begin
+  Result.Hits := nil;
+  Result.Truncated := False;
+  Result.MasterOrSelf := nil;
+  Result.WinningOverride := nil;
+  lParsedFormID := xeAutomationRequireFormID(AFormID);
+
+  if AFileName <> '' then begin
+    lFile := xeAutomationRequirePluginFile(AFileName);
+    // Compact/apply workflows can return a pre-save load-order locator and then
+    // reload the same plugin as light, where xEdit may expose a different public
+    // load-order file slot. Reuse the locator recovery seam so file-scoped identity
+    // probes stay valid across the explicit save/reload boundary.
+    lRecord := xeAutomationResolveMainRecordInFile(lFile, lParsedFormID.ToString(True));
+    if Assigned(lRecord) then begin
+      SetLength(Result.Hits, 1);
+      Result.Hits[0] := lRecord;
+      Result.MasterOrSelf := lRecord.MasterOrSelf;
+      Result.WinningOverride := lRecord.WinningOverride;
+    end;
+    Exit;
+  end;
+
+  lModules := wbModulesByLoadOrder;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if not Assigned(lFile) then
+      Continue;
+
+    // This search is intentionally exact and shallow: we probe each loaded plugin
+    // for one concrete record with the caller's public load-order identity.
+    lRecord := lFile.ContainedRecordByLoadOrderFormID[lParsedFormID, True];
+    if not Assigned(lRecord) then
+      Continue;
+
+    if not Assigned(Result.MasterOrSelf) then begin
+      // Any concrete hit can derive the shared record identity endpoints because
+      // overrides all resolve back to the same master/winning record chain.
+      Result.MasterOrSelf := lRecord.MasterOrSelf;
+      Result.WinningOverride := lRecord.WinningOverride;
+    end;
+
+    // Keep FormID identity search on the same first-cut bounded surface as the
+    // other record enumeration/search commands instead of returning every override.
+    if Length(Result.Hits) >= xeAutomationRecordSearchLimit then begin
+      Result.Truncated := True;
+      Break;
+    end;
+
+    SetLength(Result.Hits, Length(Result.Hits) + 1);
+    Result.Hits[High(Result.Hits)] := lRecord;
+  end;
+end;
+
+function xeAutomationRequireSignature(const ASignature: string): TwbSignature;
+begin
+  if ASignature = '' then
+    raise xeAutomationInvalidRequest('Automation arg "signature" is required');
+
+  if Length(ASignature) <> 4 then
+    raise xeAutomationInvalidRequest('Automation arg "signature" must be a 4-character record signature');
+
+  // Signature grouping is exact-only, but automation callers commonly send the
+  // same four-letter record code in mixed case. Normalize case before converting
+  // so signature narrowing matches the SameText tolerance used by records.list.
+  Result := StrToSignature(UpperCase(ASignature));
+end;
+
+function xeAutomationReadLimitArg(const AArgs: TJsonObject; const AName: string; const ADefault: Integer): Integer;
+var
+  lValue: Int64;
+begin
+  Result := ADefault;
+  if not Assigned(AArgs) or not AArgs.Contains(AName) then
+    Exit;
+
+  case AArgs.Types[AName] of
+    jdtInt,
+    jdtLong,
+    jdtULong:
+      lValue := AArgs.L[AName];
+  else
+    raise xeAutomationInvalidRequest(Format('Automation arg field "%s" must be an integer', [AName]));
+  end;
+
+  if lValue < 1 then
+    raise xeAutomationInvalidRequest(Format('Automation arg "%s" must be greater than zero', [AName]));
+
+  if lValue > xeAutomationRecordSearchLimit then
+    Result := xeAutomationRecordSearchLimit
+  else
+    Result := lValue;
+end;
+
+function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string; const ADefault: Integer): Integer;
+begin
+  Result := xeAutomationReadLimitArg(AArgs, AName, ADefault);
+end;
+
+function xeAutomationConflictAllFromName(const AName: string): TConflictAll;
+begin
+  if SameText(AName, 'caUnknown') then
+    Exit(caUnknown);
+  if SameText(AName, 'caOnlyOne') then
+    Exit(caOnlyOne);
+  if SameText(AName, 'caNoConflict') then
+    Exit(caNoConflict);
+  if SameText(AName, 'caConflictBenign') then
+    Exit(caConflictBenign);
+  if SameText(AName, 'caOverride') then
+    Exit(caOverride);
+  if SameText(AName, 'caConflict') then
+    Exit(caConflict);
+  if SameText(AName, 'caConflictCritical') then
+    Exit(caConflictCritical);
+
+  raise xeAutomationInvalidRequest(Format('Automation arg "conflictAll" contains an unknown conflict level: %s', [AName]));
+end;
+
+function xeAutomationConflictThisFromName(const AName: string): TConflictThis;
+begin
+  if SameText(AName, 'ctUnknown') then
+    Exit(ctUnknown);
+  if SameText(AName, 'ctIgnored') then
+    Exit(ctIgnored);
+  if SameText(AName, 'ctNotDefined') then
+    Exit(ctNotDefined);
+  if SameText(AName, 'ctIdenticalToMaster') then
+    Exit(ctIdenticalToMaster);
+  if SameText(AName, 'ctOnlyOne') then
+    Exit(ctOnlyOne);
+  if SameText(AName, 'ctHiddenByModGroup') then
+    Exit(ctHiddenByModGroup);
+  if SameText(AName, 'ctMaster') then
+    Exit(ctMaster);
+  if SameText(AName, 'ctConflictBenign') then
+    Exit(ctConflictBenign);
+  if SameText(AName, 'ctOverride') then
+    Exit(ctOverride);
+  if SameText(AName, 'ctIdenticalToMasterWinsConflict') then
+    Exit(ctIdenticalToMasterWinsConflict);
+  if SameText(AName, 'ctConflictWins') then
+    Exit(ctConflictWins);
+  if SameText(AName, 'ctConflictLoses') then
+    Exit(ctConflictLoses);
+
+  raise xeAutomationInvalidRequest(Format('Automation arg "conflictThis" contains an unknown conflict level: %s', [AName]));
+end;
+
+function xeAutomationRequirePluginFiles(const AFileNames: TStringDynArray): TxeAutomationFiles;
+var
+  i, j: Integer;
+  lFile: IwbFile;
+  lExists: Boolean;
+begin
+  if Length(AFileNames) = 0 then
+    raise xeAutomationInvalidRequest('Automation arg "files" must contain at least one plugin name');
+
+  Result := nil;
+  for i := Low(AFileNames) to High(AFileNames) do begin
+    if AFileNames[i] = '' then
+      raise xeAutomationInvalidRequest('Automation arg "files" entries must be non-empty strings');
+
+    lFile := xeAutomationRequirePluginFile(AFileNames[i]);
+    lExists := False;
+    for j := Low(Result) to High(Result) do
+      if SameText(Result[j].FileName, lFile.FileName) then begin
+        lExists := True;
+        Break;
+      end;
+
+    if lExists then
+      Continue;
+
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := lFile;
+  end;
+end;
+
+function xeAutomationReadSignatureArrayArg(const AArgs: TJsonObject; const AName: string): TwbSignatures;
+var
+  lValues: TStringDynArray;
+  i: Integer;
+begin
+  lValues := xeAutomationReadStringArrayArg(AArgs, AName);
+  SetLength(Result, Length(lValues));
+  for i := Low(lValues) to High(lValues) do
+    Result[i] := xeAutomationRequireSignature(lValues[i]);
+end;
+
+function xeAutomationReadConflictAllSetArg(const AArgs: TJsonObject; const AName: string; out AHasValue: Boolean): TConflictAllSet;
+var
+  lValues: TStringDynArray;
+  i: Integer;
+begin
+  Result := [];
+  AHasValue := Assigned(AArgs) and AArgs.Contains(AName);
+  if not AHasValue then
+    Exit;
+
+  lValues := xeAutomationReadStringArrayArg(AArgs, AName);
+  AHasValue := Length(lValues) > 0;
+  for i := Low(lValues) to High(lValues) do
+    Include(Result, xeAutomationConflictAllFromName(lValues[i]));
+end;
+
+function xeAutomationReadConflictThisSetArg(const AArgs: TJsonObject; const AName: string; out AHasValue: Boolean): TConflictThisSet;
+var
+  lValues: TStringDynArray;
+  i: Integer;
+begin
+  Result := [];
+  AHasValue := Assigned(AArgs) and AArgs.Contains(AName);
+  if not AHasValue then
+    Exit;
+
+  lValues := xeAutomationReadStringArrayArg(AArgs, AName);
+  AHasValue := Length(lValues) > 0;
+  for i := Low(lValues) to High(lValues) do
+    Include(Result, xeAutomationConflictThisFromName(lValues[i]));
+end;
+
+function xeAutomationSignatureInSet(const ASignature: TwbSignature; const ASet: TwbSignatures): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(ASet) to High(ASet) do
+    if SameText(ASignature, ASet[i]) then
+      Exit(True);
+end;
+
+function xeAutomationReadRecordFilter(const AArgs: TJsonObject): TxeAutomationRecordFilter;
+begin
+  if not Assigned(AArgs) then
+    raise xeAutomationInvalidRequest('Automation command args are required');
+
+  Result.Files := xeAutomationRequirePluginFiles(xeAutomationReadStringArrayArg(AArgs, 'files'));
+  Result.Signatures := xeAutomationReadSignatureArrayArg(AArgs, 'signatures');
+  Result.BaseSignatures := xeAutomationReadSignatureArrayArg(AArgs, 'baseSignatures');
+  Result.EditorIDPattern := xeAutomationReadStringArg(AArgs, 'editorIdPattern');
+  Result.DisplayNamePattern := xeAutomationReadStringArg(AArgs, 'displayNamePattern');
+  Result.FullNamePattern := xeAutomationReadStringArg(AArgs, 'fullNamePattern');
+  Result.BaseEditorIDPattern := xeAutomationReadStringArg(AArgs, 'baseEditorIdPattern');
+  Result.BaseDisplayNamePattern := xeAutomationReadStringArg(AArgs, 'baseDisplayNamePattern');
+
+  // Parse the public filter contract once at the request boundary so record scans can
+  // stay focused on matching real record state instead of repeating validation logic.
+  Result.HasBaseFormID := Assigned(AArgs) and AArgs.Contains('baseFormId');
+  if Result.HasBaseFormID then
+    Result.BaseFormID := xeAutomationRequireFormID(xeAutomationRequireStringArg(AArgs, 'baseFormId'));
+
+  Result.IsMaster := xeAutomationReadBooleanArg(AArgs, 'isMaster', Result.HasIsMaster);
+  Result.IsWinningOverride := xeAutomationReadBooleanArg(AArgs, 'isWinningOverride', Result.HasIsWinningOverride);
+  Result.IsDeleted := xeAutomationReadBooleanArg(AArgs, 'isDeleted', Result.HasIsDeleted);
+  Result.IsInjected := xeAutomationReadBooleanArg(AArgs, 'isInjected', Result.HasIsInjected);
+  Result.ConflictAll := xeAutomationReadConflictAllSetArg(AArgs, 'conflictAll', Result.UseConflictAll);
+  Result.ConflictThis := xeAutomationReadConflictThisSetArg(AArgs, 'conflictThis', Result.UseConflictThis);
+  Result.Limit := xeAutomationReadLimitArg(AArgs, 'limit', xeAutomationRecordSearchLimit);
+end;
+
+function xeAutomationRecordMatchesFilter(const ARecord: IwbMainRecord; const AFilter: TxeAutomationRecordFilter): Boolean;
+var
+  lBaseRecord: IwbMainRecord;
+begin
+  Result := False;
+  if not Assigned(ARecord) then
+    Exit;
+
+  if (Length(AFilter.Signatures) > 0) and not xeAutomationSignatureInSet(ARecord.Signature, AFilter.Signatures) then
+    Exit;
+  if (AFilter.EditorIDPattern <> '') and ((not ARecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(ARecord.EditorID, AFilter.EditorIDPattern)) then
+    Exit;
+  if (AFilter.DisplayNamePattern <> '') and not xeAutomationGlobMatchesCI(ARecord.DisplayName[True], AFilter.DisplayNamePattern) then
+    Exit;
+  if (AFilter.FullNamePattern <> '') and ((not ARecord.CanHaveFullName) or not xeAutomationGlobMatchesCI(ARecord.FullName, AFilter.FullNamePattern)) then
+    Exit;
+  if AFilter.HasIsMaster and (ARecord.IsMaster <> AFilter.IsMaster) then
+    Exit;
+  if AFilter.HasIsWinningOverride and (ARecord.IsWinningOverride <> AFilter.IsWinningOverride) then
+    Exit;
+  if AFilter.HasIsDeleted and (ARecord.IsDeleted <> AFilter.IsDeleted) then
+    Exit;
+  if AFilter.HasIsInjected and (ARecord.IsInjected <> AFilter.IsInjected) then
+    Exit;
+  if AFilter.UseConflictAll and not (ARecord.ConflictAll in AFilter.ConflictAll) then
+    Exit;
+  if AFilter.UseConflictThis and not (ARecord.ConflictThis in AFilter.ConflictThis) then
+    Exit;
+
+  if (Length(AFilter.BaseSignatures) > 0) or AFilter.HasBaseFormID or (AFilter.BaseEditorIDPattern <> '') or (AFilter.BaseDisplayNamePattern <> '') then begin
+    // Base-record predicates must resolve the real linked base record; matching the
+    // summarized output text would silently diverge from xEdit's actual filter logic.
+    if not ARecord.CanHaveBaseRecord or not Supports(ARecord.BaseRecord, IwbMainRecord, lBaseRecord) then
+      Exit;
+
+    if (Length(AFilter.BaseSignatures) > 0) and not xeAutomationSignatureInSet(lBaseRecord.Signature, AFilter.BaseSignatures) then
+      Exit;
+    if AFilter.HasBaseFormID and (lBaseRecord.LoadOrderFormID <> AFilter.BaseFormID) then
+      Exit;
+    if (AFilter.BaseEditorIDPattern <> '') and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(lBaseRecord.EditorID, AFilter.BaseEditorIDPattern)) then
+      Exit;
+    if (AFilter.BaseDisplayNamePattern <> '') and not xeAutomationGlobMatchesCI(lBaseRecord.DisplayName[True], AFilter.BaseDisplayNamePattern) then
+      Exit;
+  end;
+
+  Result := True;
+end;
+
+procedure xeAutomationAddBoundedRecordHit(var ASearch: TxeAutomationBoundedMainRecordSearch; const ARecord: IwbMainRecord);
+var
+  lHitCount: Integer;
+begin
+  lHitCount := Length(ASearch.Hits);
+  if lHitCount >= xeAutomationRecordSearchLimit then begin
+    ASearch.Truncated := True;
+    Exit;
+  end;
+
+  SetLength(ASearch.Hits, lHitCount + 1);
+  ASearch.Hits[lHitCount] := ARecord;
+end;
+
+function xeAutomationSameRecordLocator(const ALeft, ARight: IwbMainRecord): Boolean;
+begin
+  Result := Assigned(ALeft) and Assigned(ARight)
+    and SameText(ALeft._File.FileName, ARight._File.FileName)
+    and (ALeft.LoadOrderFormID = ARight.LoadOrderFormID);
+end;
+
+procedure xeAutomationAddUniqueRecordHit(var ASearch: TxeAutomationBoundedMainRecordSearch; const ARecord: IwbMainRecord; const ALimit: Integer);
+var
+  i: Integer;
+begin
+  if not Assigned(ARecord) then
+    Exit;
+
+  for i := Low(ASearch.Hits) to High(ASearch.Hits) do
+    if xeAutomationSameRecordLocator(ASearch.Hits[i], ARecord) then
+      Exit;
+
+  // Relationship commands promise unique root-record hits, so dedupe on the public
+  // locator shape before enforcing the caller's limit/truncated contract.
+  if Length(ASearch.Hits) >= ALimit then begin
+    ASearch.Truncated := True;
+    Exit;
+  end;
+
+  SetLength(ASearch.Hits, Length(ASearch.Hits) + 1);
+  ASearch.Hits[High(ASearch.Hits)] := ARecord;
+end;
+
+procedure xeAutomationCollectOutgoingReferencesRecursive(const AElement: IwbElement; var ASearch: TxeAutomationBoundedMainRecordSearch; const ALimit: Integer);
+var
+  lLinkedElement: IwbElement;
+  lContainer: IwbContainer;
+  i: Integer;
+begin
+  if not Assigned(AElement) or ASearch.Truncated or not AElement.CanContainFormIDs then
+    Exit;
+
+  lLinkedElement := AElement.LinksTo;
+  if Assigned(lLinkedElement) then
+    xeAutomationAddUniqueRecordHit(ASearch, lLinkedElement.ContainingMainRecord, ALimit);
+  if ASearch.Truncated then
+    Exit;
+
+  // Walk the full container subtree, not only multi-element views, so outgoing
+  // references are collected from the same record-root tree that xEdit exposes.
+  if Supports(AElement, IwbContainer, lContainer) then
+    for i := 0 to Pred(lContainer.ElementCount) do begin
+      xeAutomationCollectOutgoingReferencesRecursive(lContainer.Elements[i], ASearch, ALimit);
+      if ASearch.Truncated then
+        Exit;
+    end;
+end;
+
+function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+begin
+  Result.Hits := nil;
+  Result.Truncated := False;
+  xeAutomationCollectOutgoingReferencesRecursive(ARecord, Result, ALimit);
+end;
+
+function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+var
+  i: Integer;
+begin
+  Result.Hits := nil;
+  Result.Truncated := False;
+
+  for i := 0 to Pred(ARecord.ReferencedByCount) do begin
+    xeAutomationAddUniqueRecordHit(Result, ARecord.ReferencedBy[i], ALimit);
+    if Result.Truncated then
+      Exit;
+  end;
+end;
+
+function xeAutomationFilterMainRecords(const AArgs: TJsonObject): TxeAutomationBoundedMainRecordSearch;
+var
+  lFilter: TxeAutomationRecordFilter;
+  lFile: IwbFile;
+  lRecord: IwbMainRecord;
+  i, j: Integer;
+begin
+  Result.Hits := nil;
+  Result.Truncated := False;
+  lFilter := xeAutomationReadRecordFilter(AArgs);
+
+  for i := Low(lFilter.Files) to High(lFilter.Files) do begin
+    lFile := lFilter.Files[i];
+    for j := 0 to Pred(lFile.RecordCount) do begin
+      if not Supports(lFile.Records[j], IwbMainRecord, lRecord) then
+        Continue;
+      if not xeAutomationRecordMatchesFilter(lRecord, lFilter) then
+        Continue;
+
+      // Apply Filter is intentionally file-scoped and shallow: it streams matching
+      // root records and reports truncation instead of materializing a deeper tree.
+      if Length(Result.Hits) >= lFilter.Limit then begin
+        Result.Truncated := True;
+        Exit;
+      end;
+
+      xeAutomationAddBoundedRecordHit(Result, lRecord);
+      if Result.Truncated then
+        Exit;
+    end;
+  end;
+end;
+
+function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string): TxeAutomationBoundedMainRecordSearch;
+var
+  lModules: TwbModuleInfos;
+  lFile: IwbFile;
+  lGroup: IwbGroupRecord;
+  lRecord: IwbMainRecord;
+  lSignature: TwbSignature;
+  lUseSignature: Boolean;
+  i, j: Integer;
+begin
+  Result.Hits := nil;
+  Result.Truncated := False;
+
+  if AEditorID = '' then
+    raise xeAutomationInvalidRequest('Automation arg "editorId" is required');
+
+  lUseSignature := ASignature <> '';
+  if lUseSignature then
+    lSignature := xeAutomationRequireSignature(ASignature);
+
+  lModules := wbModulesByLoadOrder;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if not Assigned(lFile) then
+      Continue;
+
+    if lUseSignature then begin
+      // When the caller gives a concrete signature, keep the search exact and cheap
+      // by using the file's signature group plus exact EditorID lookup only.
+      lGroup := lFile.GroupBySignature[lSignature];
+      if not Assigned(lGroup) then
+        Continue;
+
+      lRecord := lGroup.MainRecordByEditorID[AEditorID];
+      if Assigned(lRecord) and SameText(lRecord.EditorID, AEditorID) then
+        xeAutomationAddBoundedRecordHit(Result, lRecord);
+    end else begin
+      // Signature-free lookup is still exact-only, but it must scan loaded records
+      // because we are intentionally not broadening this into a generalized query API.
+      for j := 0 to Pred(lFile.RecordCount) do begin
+        if not Supports(lFile.Records[j], IwbMainRecord, lRecord) then
+          Continue;
+        if not lRecord.CanHaveEditorID then
+          Continue;
+        if not SameText(lRecord.EditorID, AEditorID) then
+          Continue;
+
+        xeAutomationAddBoundedRecordHit(Result, lRecord);
+        if Result.Truncated then
+          Break;
+      end;
+    end;
+
+    if Result.Truncated then
+      Break;
+  end;
+end;
+
+procedure xeAutomationAddNewMainRecordInFile(const AFile: IwbFile; const ARecord: IwbMainRecord;
+  const ASeenRecords: TDictionary<Cardinal, Boolean>; var ARecords: TxeAutomationMainRecords);
+begin
+  if not Assigned(AFile) or not Assigned(ARecord) or (ARecord = AFile.Header) then
+    Exit;
+
+  if ARecord.LoadOrderFormID.FileID <> AFile.LoadOrderFileID then
+    Exit;
+
+  if ASeenRecords.ContainsKey(ARecord.LoadOrderFormID.ToCardinal) then
+    Exit;
+  ASeenRecords.Add(ARecord.LoadOrderFormID.ToCardinal, True);
+
+  SetLength(ARecords, Succ(Length(ARecords)));
+  ARecords[High(ARecords)] := ARecord;
+end;
+
+procedure xeAutomationCollectNewMainRecordsFromElement(const AFile: IwbFile; const AElement: IwbElement;
+  const ASeenRecords: TDictionary<Cardinal, Boolean>; var ARecords: TxeAutomationMainRecords);
+var
+  lRecord: IwbMainRecord;
+  lContainer: IwbContainer;
+  i: Integer;
+begin
+  if not Assigned(AElement) then
+    Exit;
+
+  if Supports(AElement, IwbMainRecord, lRecord) then
+    xeAutomationAddNewMainRecordInFile(AFile, lRecord, ASeenRecords, ARecords);
+
+  if Supports(AElement, IwbContainer, lContainer) then
+    for i := 0 to Pred(lContainer.ElementCount) do
+      xeAutomationCollectNewMainRecordsFromElement(AFile, lContainer.Elements[i], ASeenRecords, ARecords);
+end;
+
+function xeAutomationCollectNewMainRecordsInFile(const AFile: IwbFile): TxeAutomationMainRecords;
+var
+  lSeenRecords: TDictionary<Cardinal, Boolean>;
+  i: Integer;
+begin
+  SetLength(Result, 0);
+  if not Assigned(AFile) then
+    Exit;
+
+  lSeenRecords := TDictionary<Cardinal, Boolean>.Create;
+  try
+    // Compact/apply jobs need the same live in-memory record view used by analysis:
+    // newly-created automation records can sit under GRUP containers before save.
+    xeAutomationCollectNewMainRecordsFromElement(AFile, AFile, lSeenRecords, Result);
+    for i := 0 to Pred(AFile.RecordCount) do
+      xeAutomationAddNewMainRecordInFile(AFile, AFile.Records[i], lSeenRecords, Result);
+  finally
+    lSeenRecords.Free;
+  end;
+end;
+
+function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
+var
+  lParsedFormID: TwbFormID;
+begin
+  if not Assigned(AFile) then
+    Exit(nil);
+
+  lParsedFormID := xeAutomationRequireFormID(AFormID);
+
+  // Automation responses now round-trip public load-order FormIDs, so read-side
+  // lookup must prefer the file-level load-order seam before any compatibility path.
+  Result := AFile.ContainedRecordByLoadOrderFormID[lParsedFormID, True];
+  if Assigned(Result) then
+    Exit;
+
+  // Keep temporary compatibility for callers that still send the older file-local
+  // FormID shape until the addressing migration removes that legacy locator input.
+  Result := AFile.RecordByFormID[lParsedFormID, True, True];
+end;
+
+function xeAutomationMainRecordBelongsToFile(const ARecord: IwbMainRecord; const AFile: IwbFile): Boolean;
+begin
+  Result := Assigned(ARecord) and Assigned(AFile) and Assigned(ARecord._File)
+    and SameText(ARecord._File.FileName, AFile.FileName);
+end;
+
+function xeAutomationResolveOwnedMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
+var
+  lParsedFormID: TwbFormID;
+begin
+  if not Assigned(AFile) then
+    Exit(nil);
+
+  lParsedFormID := xeAutomationRequireFormID(AFormID);
+
+  // Mutation/existence checks must answer "does this addressed file itself own the
+  // record?" Master-walking compatibility lookup is allowed only after rejecting
+  // any result that xEdit resolved from a required master instead of the target file.
+  Result := AFile.ContainedRecordByLoadOrderFormID[lParsedFormID, True];
+  if xeAutomationMainRecordBelongsToFile(Result, AFile) then
+    Exit;
+
+  Result := AFile.RecordByFormID[lParsedFormID, True, True];
+  if not xeAutomationMainRecordBelongsToFile(Result, AFile) then
+    Result := nil;
+end;
+
+function xeAutomationRequireMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+var
+  lFile: IwbFile;
+begin
+  lFile := xeAutomationRequirePluginFile(ALocator.FileName);
+  Result := xeAutomationResolveMainRecordInFile(lFile, ALocator.FormID);
+  if not Assigned(Result) then
+    raise xeAutomationRecordNotFound(ALocator.FileName, ALocator.FormID);
+end;
+
+function xeAutomationRequireOwnedMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+var
+  lFile: IwbFile;
+begin
+  lFile := xeAutomationRequirePluginFile(ALocator.FileName);
+  Result := xeAutomationResolveOwnedMainRecordInFile(lFile, ALocator.FormID);
+  if not Assigned(Result) then
+    raise xeAutomationRecordNotFound(ALocator.FileName, ALocator.FormID);
+end;
+
+function xeAutomationRequireElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
+begin
+  ARecord := xeAutomationRequireMainRecord(ALocator);
+
+  // Elements are addressed relative to the located main record. An empty path means
+  // "the record root", which keeps record-root traversal on the same locator shape.
+  if ALocator.Path = '' then
+    Exit(ARecord);
+
+  Result := ARecord.ElementByPath[ALocator.Path];
+  if not Assigned(Result) then
+    raise xeAutomationElementNotFound(ALocator.FileName, ALocator.FormID, ALocator.Path);
+end;
+
+function xeAutomationRequireOwnedElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
+begin
+  ARecord := xeAutomationRequireOwnedMainRecord(ALocator);
+
+  // Strict owned lookup is for mutation targets: callers may still use the legacy
+  // file-local FormID compatibility shape, but not a master record reached through it.
+  if ALocator.Path = '' then
+    Exit(ARecord);
+
+  Result := ARecord.ElementByPath[ALocator.Path];
+  if not Assigned(Result) then
+    raise xeAutomationElementNotFound(ALocator.FileName, ALocator.FormID, ALocator.Path);
+end;
+
+end.

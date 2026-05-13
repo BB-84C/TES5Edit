@@ -62,6 +62,9 @@ uses
   wbNifScanner,
   wbLOD,
   wbHelpers,
+  xeAutomationServeLoop,
+  xeAutomationSession,
+  xeAutomationTypes,
   xeInit,
   wbLocalization,
   wbModGroups,
@@ -861,6 +864,8 @@ type
 
     function SaveChanged(aSilent: Boolean = False; aShowMessageIfNothing: Boolean = False): TwbSaveResult;
     procedure JumpTo(aInterface: IInterface; aBackward: Boolean);
+    function AutomationGetActiveRecord: IwbMainRecord;
+    function AutomationGetFocusedRecord: IwbMainRecord;
     function FindNodeForElement(const aElement: IwbElement): PVirtualNode;
     function FindNodeOrAncestorForElement(const aElement: IwbElement): PVirtualNode;
     function FindNodeForElementIn(aParent: PVirtualNode; const aElement: IwbElement): PVirtualNode;
@@ -914,6 +919,7 @@ type
     Files: TwbFiles;
   private
     NewMessages: TStringList;
+    AutomationServeTimer: TTimer;
     ActiveIndex: TColumnIndex;
     ActiveRecordLock: Integer;
     ActiveRecord: IwbMainRecord;
@@ -935,6 +941,7 @@ type
     ParentedGroupRecordType: set of Byte;
     RebuildingViewTree: Boolean;
     DelayedExpandView: Boolean;
+    procedure AutomationServeTimerHandler(Sender: TObject);
 
   public
     FilterPreset: Boolean; // new: flag to skip filter window
@@ -1100,6 +1107,9 @@ type
     function IsPinned: Boolean;
 
     procedure AddMessage(const s: string);
+    function BeginDaemonScriptIndicator(const AScriptId: string): Boolean;
+    procedure EndDaemonScriptIndicator(const AScriptId: string; AElapsedMs: UInt64; AMessageCount: Integer;
+      APreviousPnlClientEnabled: Boolean);
     procedure ScrollToTheLastMessage;
     procedure AddFile(const aFile: IwbFile);
     procedure AddFileInternal(const aFile: IwbFile);
@@ -1249,6 +1259,8 @@ var
   FilesToRename               : TStringList;
 
 procedure DoRename;
+function xeSavePluginFile(const AFile: IwbFile; aSilent: Boolean; out AErrorMessage: string): Boolean;
+function xeSavePluginFilePendingShutdown(const AFile: IwbFile): Boolean;
 
 function LockProcessMessages: Integer;
 function UnLockProcessMessages: Integer;
@@ -1257,6 +1269,13 @@ procedure DoProcessMessages;
 procedure xeApplyFontAndScale(aForm: TForm);
 
 function IsPositionChanged(MainRecord: IwbMainRecord): Boolean;
+
+function xeAutomationCleanIdenticalToMasterInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out APlanned, AApplied, ASkipped: Integer): Boolean;
+function xeAutomationUndeleteAndDisableRefsInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out APlanned, AApplied, ASkipped, ADeletedNavmesh: Integer): Boolean;
+function xeAutomationSortAndCleanMastersInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out ASortPlanned, ASortApplied, ASortSkipped, ACleanPlanned, ACleanApplied, ACleanSkipped: Integer): Boolean;
 
 implementation
 
@@ -1286,6 +1305,7 @@ uses
   xeLocalizationForm,
   xeLocalizePluginForm,
   xeScriptForm,
+  xeScriptExecutionGuard,
   xeLogAnalyzerForm,
   xeLODGenForm,
   xeOptionsForm,
@@ -1297,6 +1317,310 @@ uses
   xeRichEditForm,
   xeDeveloperMessageForm,
   WinInet;
+
+procedure xeAutomationCollectFileMainRecords(const AElement: IwbElement; const AFile: IwbFile;
+  const ARecords: TList<IwbMainRecord>);
+var
+  lContainer: IwbContainerElementRef;
+  lRecord: IwbMainRecord;
+  i: Integer;
+begin
+  if not Assigned(AElement) then
+    Exit;
+
+  if Supports(AElement, IwbMainRecord, lRecord) and Assigned(lRecord._File) and
+    Assigned(AFile) and SameText(lRecord._File.FileName, AFile.FileName) then
+    ARecords.Add(lRecord);
+
+  if Supports(AElement, IwbContainerElementRef, lContainer) then
+    for i := 0 to Pred(lContainer.ElementCount) do
+      xeAutomationCollectFileMainRecords(lContainer.Elements[i], AFile, ARecords);
+end;
+
+function xeAutomationMainRecordContentEquals(const ALeft, ARight: IwbMainRecord): Boolean;
+var
+  lLeftStream: TMemoryStream;
+  lRightStream: TMemoryStream;
+begin
+  Result := False;
+  if (not Assigned(ALeft)) or (not Assigned(ARight)) then
+    Exit;
+
+  lLeftStream := TMemoryStream.Create;
+  try
+    lRightStream := TMemoryStream.Create;
+    try
+      ALeft.WriteToStream(lLeftStream, rmNo);
+      ARight.WriteToStream(lRightStream, rmNo);
+      Result := (lLeftStream.Size = lRightStream.Size) and
+        ((lLeftStream.Size = 0) or CompareMem(lLeftStream.Memory, lRightStream.Memory, lLeftStream.Size));
+    finally
+      lRightStream.Free;
+    end;
+  finally
+    lLeftStream.Free;
+  end;
+end;
+
+function xeAutomationElementContentEquals(const ALeft, ARight: IwbElement): Boolean;
+var
+  lLeftContainer: IwbContainerElementRef;
+  lRightContainer: IwbContainerElementRef;
+  lLeftStart: Integer;
+  lRightStart: Integer;
+  lCompareCount: Integer;
+  lLeftIsContainer: Boolean;
+  lRightIsContainer: Boolean;
+  i: Integer;
+begin
+  Result := False;
+  if (not Assigned(ALeft)) or (not Assigned(ARight)) then
+    Exit;
+  if ALeft.ElementType <> ARight.ElementType then
+    Exit;
+
+  lLeftIsContainer := Supports(ALeft, IwbContainerElementRef, lLeftContainer);
+  lRightIsContainer := Supports(ARight, IwbContainerElementRef, lRightContainer);
+  if lLeftIsContainer or lRightIsContainer then begin
+    if (not lLeftIsContainer) or (not lRightIsContainer) then
+      Exit;
+
+    // Main-record headers carry file-local ownership/load-order metadata. ITM
+    // cleaning must compare user payload below those additional header fields so
+    // freshly reloaded automation fixtures match the validation-only ITM seam.
+    lLeftStart := lLeftContainer.AdditionalElementCount;
+    lRightStart := lRightContainer.AdditionalElementCount;
+    lCompareCount := lLeftContainer.ElementCount - lLeftStart;
+    if lCompareCount <> (lRightContainer.ElementCount - lRightStart) then
+      Exit;
+
+    for i := 0 to Pred(lCompareCount) do
+      if not xeAutomationElementContentEquals(lLeftContainer.Elements[lLeftStart + i], lRightContainer.Elements[lRightStart + i]) then
+        Exit;
+
+    Result := True;
+    Exit;
+  end;
+
+  Result := SameText(ALeft.BaseName, ARight.BaseName) and (ALeft.EditValue = ARight.EditValue);
+end;
+
+function xeAutomationRecordIsItmCandidate(const ARecord: IwbMainRecord): Boolean;
+var
+  lMaster: IwbMainRecord;
+begin
+  Result := False;
+  if not Assigned(ARecord) then
+    Exit;
+  lMaster := ARecord.MasterOrSelf;
+  if (not Assigned(lMaster)) or lMaster.Equals(ARecord) or lMaster.IsInjected then
+    Exit;
+  // Automation reuses the GUI cleaner's native ITM concept but avoids tree nodes,
+  // filter setup, progress UI, and any save/exit side effects.
+  Result := lMaster.ContentEquals(ARecord) or xeAutomationMainRecordContentEquals(lMaster, ARecord) or
+    xeAutomationElementContentEquals(lMaster, ARecord) or
+    (ARecord.ConflictThis = ctIdenticalToMaster) or
+    ((ARecord.ConflictThis = ctConflictBenign) and (ARecord.Signature = 'NAVM'));
+end;
+
+function xeAutomationRecordIsDeletedRefCandidate(const ARecord: IwbMainRecord): Boolean;
+begin
+  Result := Assigned(ARecord) and ARecord.IsDeleted and (
+    (ARecord.Signature = 'REFR') or
+    (ARecord.Signature = 'PGRE') or
+    (ARecord.Signature = 'PMIS') or
+    (ARecord.Signature = 'ACHR') or
+    (ARecord.Signature = 'ACRE') or
+    (ARecord.Signature = 'NAVM') or
+    (ARecord.Signature = 'PARW') or
+    (ARecord.Signature = 'PBAR') or
+    (ARecord.Signature = 'PBEA') or
+    (ARecord.Signature = 'PCON') or
+    (ARecord.Signature = 'PFLA') or
+    (ARecord.Signature = 'PHZD'));
+end;
+
+function xeAutomationDeletedRefCanBeCleaned(const ARecord: IwbMainRecord; out ADeletedNavmesh: Boolean): Boolean;
+var
+  lLinksToRecord: IwbMainRecord;
+begin
+  Result := False;
+  ADeletedNavmesh := False;
+  if not Assigned(ARecord) then
+    Exit;
+  lLinksToRecord := ARecord.MasterOrSelf.BaseRecord;
+  if ARecord.Signature = 'NAVM' then begin
+    ADeletedNavmesh := True;
+    Exit;
+  end;
+  if ARecord.IsInjected or (not Assigned(lLinksToRecord)) then
+    Exit;
+  if (wbGameMode in [gmFNV]) and (lLinksToRecord.Signature = 'TREE') and lLinksToRecord.Flags.HasLODtree then
+    Exit;
+  Result := True;
+end;
+
+function xeAutomationCleanIdenticalToMasterInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out APlanned, AApplied, ASkipped: Integer): Boolean;
+var
+  lRecords: TList<IwbMainRecord>;
+  lRecord: IwbMainRecord;
+begin
+  APlanned := 0;
+  AApplied := 0;
+  ASkipped := 0;
+  lRecords := TList<IwbMainRecord>.Create;
+  try
+    xeAutomationCollectFileMainRecords(AFile, AFile, lRecords);
+    for lRecord in lRecords do
+      if xeAutomationRecordIsItmCandidate(lRecord) then begin
+        if not lRecord.IsRemovable then begin
+          Inc(ASkipped);
+          Continue;
+        end;
+        Inc(APlanned);
+        if AApply then begin
+          lRecord.Remove;
+          Inc(AApplied);
+        end;
+      end;
+  finally
+    lRecords.Free;
+  end;
+  Result := AApplied > 0;
+end;
+
+function xeAutomationUndeleteAndDisableRefsInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out APlanned, AApplied, ASkipped, ADeletedNavmesh: Integer): Boolean;
+var
+  lRecords: TList<IwbMainRecord>;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lContainer: IwbContainerElementRef;
+  lPosition: TwbVector;
+  lDeletedNavmesh: Boolean;
+  lLinksToRecord: IwbMainRecord;
+begin
+  APlanned := 0;
+  AApplied := 0;
+  ASkipped := 0;
+  ADeletedNavmesh := 0;
+  lRecords := TList<IwbMainRecord>.Create;
+  try
+    xeAutomationCollectFileMainRecords(AFile, AFile, lRecords);
+    for lRecord in lRecords do
+      if xeAutomationRecordIsDeletedRefCandidate(lRecord) then begin
+        if not xeAutomationDeletedRefCanBeCleaned(lRecord, lDeletedNavmesh) then begin
+          Inc(ASkipped);
+          if lDeletedNavmesh then
+            Inc(ADeletedNavmesh);
+          Continue;
+        end;
+        if not lRecord.IsEditable then begin
+          Inc(ASkipped);
+          Continue;
+        end;
+        Inc(APlanned);
+        if AApply then begin
+          // This mirrors the GUI UDR mutation itself while deliberately omitting
+          // selection, messages, dirty-info persistence, save, and auto-close logic.
+          lRecord.IsDeleted := True;
+          lRecord.IsDeleted := False;
+          if not lRecord.IsPersistent then
+            if wbUDRSetZ and lRecord.GetPosition(lPosition) then begin
+              lPosition.z := wbUDRSetZValue;
+              lRecord.SetPosition(lPosition);
+            end;
+          lRecord.RemoveElement('Enable Parent');
+          lRecord.RemoveElement('XTEL');
+          lRecord.IsInitiallyDisabled := True;
+          if wbUDRSetXESP and Supports(lRecord.Add('XESP', True), IwbContainerElementRef, lContainer) then begin
+            lContainer.ElementNativeValues['Reference'] := $14;
+            lContainer.Elements[1].NativeValue := 1;
+          end;
+          if wbUDRSetScale and not Assigned(lRecord.ElementBySignature['XSCL']) then begin
+            lElement := lRecord.Add('XSCL', True);
+            if Assigned(lElement) then
+              lElement.NativeValue := wbUDRSetScaleValue;
+          end;
+          if wbUDRSetMSTT and wbIsFallout3 then begin
+            lElement := lRecord.ElementBySignature['NAME'];
+            if Assigned(lElement) and Supports(lElement.LinksTo, IwbMainRecord, lLinksToRecord) and
+              (lLinksToRecord.Signature = 'MSTT') then
+              lElement.NativeValue := wbUDRSetMSTTValue;
+          end;
+          Inc(AApplied);
+        end;
+      end;
+  finally
+    lRecords.Free;
+  end;
+  Result := AApplied > 0;
+end;
+
+function xeAutomationSortAndCleanMastersInMemory(const AFile: IwbFile; const AApply: Boolean;
+  out ASortPlanned, ASortApplied, ASortSkipped, ACleanPlanned, ACleanApplied, ACleanSkipped: Integer): Boolean;
+var
+  lBefore: TStringList;
+  lAfterSort: TStringList;
+  lAfterClean: TStringList;
+  i: Integer;
+
+  procedure CaptureMasterList(const AList: TStringList);
+  var
+    j: Integer;
+  begin
+    AList.Clear;
+    for j := 0 to Pred(AFile.MasterCount[True]) do
+      AList.Add(AFile.Masters[j, True].FileName);
+  end;
+
+  function MasterListsEqual(const ALeft, ARight: TStringList): Boolean;
+  var
+    j: Integer;
+  begin
+    Result := ALeft.Count = ARight.Count;
+    if not Result then
+      Exit;
+    for j := 0 to Pred(ALeft.Count) do
+      if not SameText(ALeft[j], ARight[j]) then
+        Exit(False);
+  end;
+begin
+  ASortPlanned := 1;
+  ASortApplied := 0;
+  ASortSkipped := 0;
+  ACleanPlanned := 1;
+  ACleanApplied := 0;
+  ACleanSkipped := 0;
+  if not AApply then
+    Exit(False);
+
+  lBefore := TStringList.Create;
+  lAfterSort := TStringList.Create;
+  lAfterClean := TStringList.Create;
+  try
+    CaptureMasterList(lBefore);
+    AFile.SortMasters;
+    CaptureMasterList(lAfterSort);
+    if MasterListsEqual(lBefore, lAfterSort) then
+      ASortSkipped := 1
+    else
+      ASortApplied := 1;
+
+    AFile.CleanMasters;
+    CaptureMasterList(lAfterClean);
+    if MasterListsEqual(lAfterSort, lAfterClean) then
+      ACleanSkipped := 1
+    else
+      ACleanApplied := 1;
+    Result := (ASortApplied + ACleanApplied) > 0;
+  finally
+    lAfterClean.Free;
+    lAfterSort.Free;
+    lBefore.Free;
+  end;
+end;
 
 function wbFormatElapsedTime(aElapsed: double): string;
 var
@@ -1627,6 +1951,150 @@ begin
   Result := True;
 end;
 
+function xeSavePluginFile(const AFile: IwbFile; aSilent: Boolean; out AErrorMessage: string): Boolean;
+var
+  FileStream         : TBufferedFileStream;
+  NeedsRename        : Boolean;
+  SavedThisOne       : Boolean;
+  TryDirectRename    : Boolean;
+  CRC                : TwbCRC32;
+  BackupWarningGiven : Boolean;
+  s                  : string;
+  t                  : string;
+  u                  : string;
+  j                  : Integer;
+
+const
+  ResetModifiedFromBool : array[Boolean] of TwbResetModified =
+    (rmNo, rmSetInternal);
+begin
+  Result := False;
+  AErrorMessage := '';
+
+  if not Assigned(AFile) then begin
+    AErrorMessage := 'Plugin file is required';
+    Exit;
+  end;
+
+  if not AFile.Modified then
+    Exit;
+
+  // Automation save must stay on the same rename/backup/reset-modified seam as the
+  // GUI save flow so session.save does not grow a parallel persistence stack.
+  BackupWarningGiven := False;
+  TryDirectRename := False;
+  SavedThisOne := False;
+  t := '.save.' + FormatDateTime('yyyy_mm_dd_hh_nn_ss', Now);
+
+  s := AFile.FileNameOnDisk;
+  u := s;
+  NeedsRename := FileExists(wbDataPath + AFile.FileNameOnDisk);
+  if NeedsRename then begin
+    s := s + t;
+    j := 0;
+    while FileExists(wbDataPath + s) do begin
+      Inc(j);
+      s := u + t + '_' + j.ToString;
+    end;
+  end;
+
+  CRC := AFile.CRC32;
+  FileStream := TBufferedFileStream.Create(wbDataPath + s, fmCreate, 1024 * 1024);
+  try
+    try
+      if wbStartTime = 0 then
+        wbStartTime := Now;
+      if Assigned(frmMain) then
+        frmMain.PostAddMessage('[' + wbFormatElapsedTime(Now - wbStartTime) + '] Saving: ' + s)
+      else
+        wbProgress('Saving: ' + s);
+      AFile.WriteToStream(FileStream, ResetModifiedFromBool[wbResetModifiedOnSave]);
+      SavedThisOne := True;
+      if not (fsMemoryMapped in AFile.FileStates) then
+        TryDirectRename := True;
+    finally
+      FileStream.Free;
+    end;
+
+    if NeedsRename and (CRC = AFile.CRC32) then begin
+      DeleteFile(wbDataPath + s);
+      NeedsRename := False;
+      TryDirectRename := False;
+      SavedThisOne := False;
+      if Assigned(frmMain) then
+        frmMain.PostAddMessage('[' + wbFormatElapsedTime(Now - wbStartTime) + '] File has not changed, removing: ' + s)
+      else
+        wbProgress('File has not changed, removing: ' + s);
+    end;
+  except
+    on E: Exception do begin
+      DeleteFile(wbDataPath + s);
+      AErrorMessage := E.Message;
+      Exit;
+    end;
+  end;
+
+  if SavedThisOne then begin
+    if NeedsRename and TryDirectRename then try
+      if not DoRenameModule(s, u, True) then begin
+        AErrorMessage := Format('Direct save failed for %s', [AFile.FileName]);
+        wbProgress('Direct save failed. Will queue save for renaming on shutdown.');
+      end else
+        NeedsRename := False;
+    except
+      on E: Exception do
+        AErrorMessage := E.Message;
+    end;
+
+    if NeedsRename then begin
+      if not Assigned(FilesToRename) then
+        FilesToRename := TStringList.Create;
+      FilesToRename.AddPair(u, s);
+      wbProgress('Queued renaming of save "' + wbDataPath + s + '" to "' + wbDataPath + u + '" on shutdown.');
+    end else begin
+      if Assigned(FilesToRename) then
+        for j := Pred(FilesToRename.Count) downto 0 do begin
+          if SameText(u, FilesToRename.KeyNames[j]) then begin
+            s := FilesToRename.ValueFromIndex[j];
+            if xeDontBackup then begin
+              if not BackupWarningGiven then begin
+                wbProgress('******** WARNING ********');
+                wbProgress('* Backups are disabled! *');
+                wbProgress('******** WARNING ********');
+              end;
+              wbProgress('Removing previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
+              DeleteFile(wbDataPath + s);
+            end else begin
+              wbProgress('Backing up previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
+              DoBackupModule(s, u, aSilent);
+            end;
+            FilesToRename.Delete(j);
+          end;
+        end;
+    end;
+  end;
+
+  Result := SavedThisOne;
+end;
+
+function xeSavePluginFilePendingShutdown(const AFile: IwbFile): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+
+  if not Assigned(AFile) or not Assigned(FilesToRename) then
+    Exit;
+
+  // session.save needs to distinguish immediate persistence from the existing
+  // shutdown rename queue because both clear Modified but only one is on disk now.
+  for i := 0 to Pred(FilesToRename.Count) do
+    if SameText(AFile.FileNameOnDisk, FilesToRename.Names[i]) then begin
+      Result := True;
+      Exit;
+    end;
+end;
+
 var
   _SaveProgress: Boolean;
 
@@ -1800,6 +2268,37 @@ begin
 
   if pgMain.ActivePage <> tbsMessages then
     tbsMessages.Highlighted := True;
+end;
+
+function TfrmMain.BeginDaemonScriptIndicator(const AScriptId: string): Boolean;
+begin
+  // The snapshot is local (function return + End parameter) so daemon reentry via
+  // wbTick-driven message pumping cannot corrupt an outer indicator state.
+  Result := pnlClient.Enabled;
+  // Daemon scripts.run is synchronous on the GUI thread; paint the cancel affordance
+  // and leave a log breadcrumb before the unavoidable freeze window begins.
+  AddMessage(Format('Daemon: Applying automation script "%s"', [AScriptId]));
+  pnlClient.Enabled := False;
+  UpdatePnlCancelVisible;
+  pnlCancel.Update;
+end;
+
+procedure TfrmMain.EndDaemonScriptIndicator(const AScriptId: string; AElapsedMs: UInt64; AMessageCount: Integer;
+  APreviousPnlClientEnabled: Boolean);
+begin
+  // The snapshot is local (function return + End parameter) so daemon reentry via
+  // wbTick-driven message pumping cannot corrupt an outer indicator state.
+  pnlClient.Enabled := APreviousPnlClientEnabled;
+  UpdatePnlCancelVisible;
+  // The GUI can only respond after the synchronous daemon run returns, so hide the
+  // affordance and log the measured freeze window rather than implying async cancel.
+  AddMessage(Format('Daemon: Done "%s" (elapsed %dms, %d message(s) captured)',
+    [AScriptId, AElapsedMs, AMessageCount]));
+  // Reset wbForceTerminate at the end so a queued click on the daemon-shown cancel
+  // panel cannot leak True into a later non-script long action. The daemon scripts.run
+  // path advertises supports.scripts.execution.cancelable = false; the cancel surface
+  // is reused only as a visible busy indicator, not as a real cancellation affordance.
+  wbForceTerminate := False;
 end;
 
 function TfrmMain.AddNewFileName(aFileName: string; aIsLight, aIsMedium: Boolean): IwbFile;
@@ -4587,9 +5086,13 @@ begin
   if i < 1 then
     Exit;
 
-  if MessageDlg('The Reference Cache contains ' + i.ToString +
-    ' files from a different version of ' + wbAppName + wbToolName +
-    '. Do you want to remove them?', mtConfirmation, mbYesNo, 0) = mrYes then
+  // Automation serve mode creates its named pipe only after startup has finished.
+  // Pre-pipe confirmation dialogs would leave the daemon unreachable, so this
+  // stale-cache cleanup path must resolve itself instead of waiting for a click.
+  if (xeAutomationMode = xamServe) or
+    (MessageDlg('The Reference Cache contains ' + i.ToString +
+      ' files from a different version of ' + wbAppName + wbToolName +
+      '. Do you want to remove them?', mtConfirmation, mbYesNo, 0) = mrYes) then
     for i := Low(Files) to High(Files) do try
       TFile.Delete(Files[i]);
     except end;
@@ -4939,6 +5442,49 @@ var
   AgeDateTime   : TDateTime;
 
   Stream        : TStream;
+
+  procedure LogAutomationServeStartupModules;
+  var
+    lModules     : TwbModuleInfos;
+    lModule      : PwbModuleInfo;
+    lActiveCount : Integer;
+    lValidCount  : Integer;
+    lTaggedCount : Integer;
+    lMissingCount: Integer;
+    lModuleIndex : Integer;
+
+  begin
+    if xeAutomationMode <> xamServe then
+      Exit;
+
+    lModules := wbModulesByLoadOrder;
+    lActiveCount := 0;
+    lValidCount := 0;
+    lTaggedCount := 0;
+    lMissingCount := 0;
+
+    for lModuleIndex := Low(lModules) to High(lModules) do begin
+      lModule := lModules[lModuleIndex];
+      if not Assigned(lModule) then
+        Continue;
+
+      if lModule.IsValid then
+        Inc(lValidCount);
+      if lModule.IsActive then
+        Inc(lActiveCount);
+      if mfTaggedForPluginMode in lModule.miFlags then
+        Inc(lTaggedCount);
+      if mfMastersMissing in lModule.miFlags then
+        Inc(lMissingCount);
+    end;
+
+    // Serve mode creates the named pipe only after headless loading. When that
+    // fails pre-pipe, clients only see a generic timeout unless the startup log
+    // captures what xEdit discovered and considered loadable at this seam.
+    AddMessage('Automation serve startup module snapshot: root="' + wbDataPath + '", total=' + IntToStr(Length(lModules)) +
+      ', valid=' + IntToStr(lValidCount) + ', active=' + IntToStr(lActiveCount) +
+      ', taggedForPluginMode=' + IntToStr(lTaggedCount) + ', missingMasters=' + IntToStr(lMissingCount));
+  end;
 begin
   {$IFDEF USE_PARALLEL_BUILD_REFS}
   TThread.CreateAnonymousThread(procedure begin
@@ -5127,7 +5673,7 @@ begin
   if wbToolMode in [tmEdit, tmView, tmTranslate] then begin
 
     {$IFDEF WIN64}
-    if not wbIsStarfield then
+    if (xeAutomationMode <> xamServe) and not wbIsStarfield then
       if Settings.ReadBool('Init', 'First64Start', True) then begin
         if MessageDlg('You have started the 64bit version.' + CRLF + CRLF +
           'The only reason to use the 64bit version is if you are getting an out of memory ' +
@@ -5141,7 +5687,7 @@ begin
         Settings.UpdateFile;
       end;
     {$ELSE}
-    if wbIsStarfield then
+    if (xeAutomationMode <> xamServe) and wbIsStarfield then
       if Settings.ReadBool('Init', 'First32StarfieldStart', True) then begin
         if MessageDlg('You have started the 32bit version for Starfield.' + CRLF + CRLF +
           'Given the size of Starfield.esm, it is very likely that you will run out ' +
@@ -5192,7 +5738,7 @@ begin
     end;
 
     wbPatron := Settings.ReadBool('Options', 'Patron', wbPatron);
-    if not wbPatron or not xeAutoLoad then
+    if (xeAutomationMode <> xamServe) and (not wbPatron or not xeAutoLoad) then
       ShowDeveloperMessage;
   end;
 
@@ -5256,9 +5802,19 @@ begin
           end;
         end;
 
-        if ((wbToolMode in wbPluginModes) or xeQuickClean or xeQuickEdit) and not wbIsMorrowind then begin
+        if xeAutomationMode = xamServe then
+          if xePluginToUse = '' then
+            // Normal edit-mode parsing does not consume positional modules for
+            // automation serve. Pull the first explicit module here so the
+            // existing activation loop below can load it headlessly.
+            xeFindNextValidCmdLineModule(xeParamIndex, xePluginToUse, wbDataPath);
+
+        if ((wbToolMode in wbPluginModes) or xeQuickClean or xeQuickEdit or ((xeAutomationMode = xamServe) and (xePluginToUse <> ''))) and not wbIsMorrowind then begin
           Modules.DeactivateAll;
 
+          // Serve mode may be launched with explicit positional modules even in
+          // normal edit mode; activate them here so headless SimulateLoad does
+          // not fall back to the active-profile-only path.
           if (xePluginToUse <> '') or not xeQuickClean then
             with wbModuleByName(xePluginToUse)^ do
               if IsValid then begin
@@ -5286,18 +5842,35 @@ begin
 
         sl.Clear;
         if wbToolSource in [tsPlugins] then begin
-          if (wbToolMode in wbPluginModes) or (xeAutoLoad and (GetAsyncKeyState(VK_CONTROL) >= 0)) then try
-            if xeQuickClean then
-              if Length(wbModulesByLoadOrder.FilteredByFlag(mfTaggedForPluginMode)) <> 1 then begin
-                ShowMessage('Exactly one module must be selected for Quick Clean mode.');
-                frmMain.Close;
-                Exit;
-              end;
+          if (wbToolMode in wbPluginModes) or (xeAutoLoad and ((xeAutomationMode = xamServe) or (GetAsyncKeyState(VK_CONTROL) >= 0))) then
+            try
+              if xeQuickClean then
+                if Length(wbModulesByLoadOrder.FilteredByFlag(mfTaggedForPluginMode)) <> 1 then begin
+                  ShowMessage('Exactly one module must be selected for Quick Clean mode.');
+                  frmMain.Close;
+                  Exit;
+                end;
 
-            sl.AddStrings(wbModulesByLoadOrder.SimulateLoad.ToStrings(False));
-          except end;
+              LogAutomationServeStartupModules;
+              sl.AddStrings(wbModulesByLoadOrder.SimulateLoad.ToStrings(False));
+            except
+              on E: Exception do begin
+                // In serve mode there is no modal recovery path before close;
+                // keep the concrete startup failure in the normal log so
+                // headless VFS-overlay environments can explain why the pipe never appeared.
+                if xeAutomationMode = xamServe then
+                  AddMessage('Automation serve startup failed during SimulateLoad: [' + E.ClassName + '] ' + E.Message);
+              end;
+            end;
 
           if sl.Count < 1 then
+            if xeAutomationMode = xamServe then begin
+              // Serve mode needs headless startup; the named pipe is created only
+              // after load completes, so Module Selection would deadlock clients.
+              AddMessage('Automation serve startup resolved no modules after headless autoload; cannot create named pipe.');
+              frmMain.Close;
+              Exit;
+            end else
             with TfrmModuleSelect.Create(Self) do try
               if xeQuickClean then begin
                 MinSelect := 1;
@@ -6286,6 +6859,8 @@ var
 
 begin
   Action := caFree;
+  FreeAndNil(AutomationServeTimer);
+  xeAutomationServeLoopStop;
   if LoaderStarted and not wbLoaderDone then begin
     wbForceTerminate := True;
     Caption := 'Waiting for Background Loader to terminate...';
@@ -6565,6 +7140,8 @@ begin
   if wbShrinkButtons then
     ShrinkButtons;
 
+  AutomationServeTimer := nil;
+
   if wbToolMode in wbAutoModes then begin
     mmoMessages.Parent := Self;
     pnlNav.Visible := False;
@@ -6777,6 +7354,23 @@ end;
 procedure TfrmMain.FormShow(Sender: TObject);
 begin
   tmrStartup.Enabled := True;
+  if xeAutomationMode = xamServe then
+    WindowState := wsMinimized;
+end;
+
+procedure TfrmMain.AutomationServeTimerHandler(Sender: TObject);
+begin
+  try
+    xeAutomationServeLoopPoll;
+  except
+    on E: Exception do begin
+      if Assigned(AutomationServeTimer) then
+        AutomationServeTimer.Enabled := False;
+      AddMessage('Automation daemon stopped: ' + E.Message);
+      CheckResult := 1;
+      tmrShutdown.Enabled := True;
+    end;
+  end;
 end;
 
 procedure TfrmMain.fpnlViewFilterResize(Sender: TObject);
@@ -7812,6 +8406,28 @@ begin
     HistoryEntry.Show;
 end;
 
+function TfrmMain.AutomationGetActiveRecord: IwbMainRecord;
+begin
+  // Automation commands need a read-only view of the private active-record slot
+  // after native navigation has run; exposing a getter avoids duplicating UI state.
+  Result := ActiveRecord;
+end;
+
+function TfrmMain.AutomationGetFocusedRecord: IwbMainRecord;
+var
+  lNodeData: PNavNodeData;
+begin
+  Result := nil;
+  if not Assigned(vstNav) or not Assigned(vstNav.FocusedNode) then
+    Exit;
+
+  lNodeData := vstNav.GetNodeData(vstNav.FocusedNode);
+  if Assigned(lNodeData) then
+    // The navigation postcondition needs the semantic record under the focused tree
+    // node, not just a selected-node flag, to avoid false-green UI navigation claims.
+    Supports(lNodeData.Element, IwbMainRecord, Result);
+end;
+
 procedure TfrmMain.lvReferencedByColumnClick(Sender: TObject; Column: TListColumn);
 begin
   ReferencedBySortColumn := Column;
@@ -8419,6 +9035,14 @@ var
   bShowMessages               : Boolean;
   PrevMaxMessageInterval      : UInt64;
 begin
+  // xeScriptExecutionGuard is the canonical cross-host authority; the Script field
+  // check below remains as in-process defense in depth for GUI reentry.
+  if not xeScriptGuardTryAcquire('gui') then begin
+    PostAddMessage('Script is already running');
+    Exit;
+  end;
+
+  try
   // prevent execution of new scripts if already executing
   if Assigned(Script) then begin
     PostAddMessage('Script is already running');
@@ -8527,6 +9151,9 @@ begin
   finally
     Script := nil;
     ScriptRunning := False;
+  end;
+  finally
+    xeScriptGuardRelease;
   end;
 end;
 
@@ -11203,7 +11830,7 @@ end;
 function TfrmMain.LOOTDirtyInfo(const aInfo: TLOOTPluginInfo; aFileChanged: Boolean): string;
 // LOOT dirty entry example
 {
-  - name: 'DLCRobot.esm'
+  - name: 'ExamplePlugin.esm'
     dirty:
       - <<: *dirtyPlugin
         crc: 0xD69027EA
@@ -15876,14 +16503,14 @@ begin
                   _LFile.WriteToStream(FileStream);
                   SavedAny := True;
                   SavedThisOne := True;
-                  TryDirectRename := True; //TODO: make sure this is ok?
-                  _LFile.Modified := False;
+                  TryDirectRename := True;
                 finally
                   FileStream.Free;
                 end;
 
               except
                 on E: Exception do begin
+                  DeleteFile(wbDataPath + s);
                   AnyErrors := True;
                   NeedsRename := False;
                   SavedThisOne := False;
@@ -15891,96 +16518,69 @@ begin
                 end;
               end;
 
+              if SavedThisOne then begin
+                if NeedsRename and TryDirectRename then try
+                  if not DoRenameModule(s, u, True) then begin
+                    AnyErrors := True;
+                    PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Direct save failed for ' + u + '. Will queue save for renaming on shutdown.');
+                  end else
+                    NeedsRename := False;
+                except
+                  on E: Exception do begin
+                    AnyErrors := True;
+                    PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Direct save failed for ' + u + ': ' + E.Message);
+                  end;
+                end;
+
+                if NeedsRename then begin
+                  if not Assigned(FilesToRename) then
+                    FilesToRename := TStringList.Create;
+                  FilesToRename.AddPair(u, s);
+                  _LFile.Modified := False;
+                  wbProgress('Queued renaming of save "' + wbDataPath + s + '" to "' + wbDataPath + u + '" on shutdown.');
+                end else begin
+                  // Localization saves use the same temp-file seam as plugins: once a
+                  // direct replace succeeds, stale queued saves for that target must not
+                  // be replayed during shutdown.
+                  if Assigned(FilesToRename) then
+                    for j := Pred(FilesToRename.Count) downto 0 do begin
+                      if SameText(u, FilesToRename.KeyNames[j]) then begin
+                        s := FilesToRename.ValueFromIndex[j];
+                        if xeDontBackup then begin
+                          if not BackupWarningGiven then begin
+                            wbProgress('******** WARNING ********');
+                            wbProgress('* Backups are disabled! *');
+                            wbProgress('******** WARNING ********');
+                            BackupWarningGiven := True;
+                          end;
+                          wbProgress('Removing previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
+                          DeleteFile(wbDataPath + s);
+                        end else begin
+                          wbProgress('Backing up previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
+                          DoBackupModule(s, u, aSilent);
+                        end;
+                        FilesToRename.Delete(j);
+                      end;
+                    end;
+                  _LFile.Modified := False;
+                end;
+              end;
+
             end else
 
             // plugin file
             begin
-
               _File := IwbFile(Pointer(CheckListBox1.Items.Objects[i]));
+              SavedThisOne := xeSavePluginFile(_File, aSilent, s);
+              if SavedThisOne then
+                SavedAny := True;
 
-              s := CheckListBox1.Items[i];
-              u := s;
-              NeedsRename := FileExists(wbDataPath + CheckListBox1.Items[i]);
-              if NeedsRename then begin
-                s := s + t;
-                j := 0;
-                while FileExists(wbDataPath + s) do begin
-                  Inc(j);
-                  s := u + t + '_' + j.ToString;
-                end;
-              end;
-
-              CRC := _File.CRC32;
-              FileStream := TBufferedFileStream.Create(wbDataPath + s, fmCreate, 1024 * 1024);
-              try
-                try
-                  PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Saving: ' + s);
-                  _File.WriteToStream(FileStream, ResetModifiedFromBool[wbResetModifiedOnSave]);
-                  SavedThisOne := True;
-                  if not (fsMemoryMapped in _File.FileStates) then
-                    TryDirectRename := True;
-                finally
-                  FileStream.Free;
-                end;
-
-                if NeedsRename then
-                  if CRC = _File.CRC32 then begin
-                    DeleteFile(wbDataPath + s);
-                    NeedsRename := False;
-                    TryDirectRename := False;
-                    SavedThisOne := False;
-                    PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] File has not changed, removing: ' + s);
-                  end;
-
+              if s <> '' then begin
+                AnyErrors := True;
                 if SavedThisOne then
-                  SavedAny := True;
-              except
-                on E: Exception do begin
-                  DeleteFile(wbDataPath + s);
-                  AnyErrors := True;
-                  NeedsRename := False;
-                  PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Error saving ' + s + ': ' + E.Message);
-                end;
-              end;
-
-            end;
-
-            if SavedThisOne then begin
-              if NeedsRename and TryDirectRename then try
-                if not DoRenameModule(s, u, True) then begin
-                  AnyErrors := True;
-                  wbProgress('Direct save failed. Will queue save for renaming on shutdown.');
-                end else
-                  NeedsRename := False;
-              except end;
-
-              if NeedsRename then begin
-                if not Assigned(FilesToRename) then
-                  FilesToRename := TStringList.Create;
-                // s - rename from, relative to DataPath
-                // u - rename to, relative to DataPath
-                FilesToRename.AddPair(u, s);
-                wbProgress('Queued renaming of save "' + wbDataPath + s + '" to "' + wbDataPath + u + '" on shutdown.');
-              end else begin
-                if Assigned(FilesToRename) then
-                  for j := Pred(FilesToRename.Count) downto 0 do begin
-                    if SameText(u, FilesToRename.KeyNames[j]) then begin
-                      s := FilesToRename.ValueFromIndex[j];
-                      if xeDontBackup then begin
-                        if not BackupWarningGiven then begin
-                          wbProgress('******** WARNING ********');
-                          wbProgress('* Backups are disabled! *');
-                          wbProgress('******** WARNING ********');
-                        end;
-                        wbProgress('Removing previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
-                        DeleteFile(wbDataPath + s);
-                      end else begin
-                        wbProgress('Backing up previously queued save "' + wbDataPath + s + '" as a direct save to "' + wbDataPath + u + '" has succeeded.');
-                        DoBackupModule(s, u, aSilent);
-                      end;
-                      FilesToRename.Delete(j);
-                    end;
-                  end;
+                  PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Save queued with error for ' + _File.FileNameOnDisk + ': ' + s);
+                if not SavedThisOne then
+                  PostAddMessage('[' + wbFormatElapsedTime( Now - wbStartTime) + '] Error saving ' + _File.FileNameOnDisk + ': ' + s);
               end;
             end;
 
@@ -20712,6 +21312,21 @@ begin
 
         tmrCheckUnsaved.Enabled := True;
 
+        if xeAutomationMode = xamServe then begin
+          // Loaded-data automation must wait for xEdit's actual loader completion,
+          // because the registry handlers operate on the same in-memory state the UI uses.
+          // Starting the pipe earlier would create a second fake lifecycle where commands race
+          // partially initialized files, references, and post-load setup.
+          xeAutomationServeLoopStart;
+          if not Assigned(AutomationServeTimer) then begin
+            AutomationServeTimer := TTimer.Create(Self);
+            AutomationServeTimer.Interval := 50;
+            AutomationServeTimer.OnTimer := AutomationServeTimerHandler;
+          end;
+          AutomationServeTimer.Enabled := True;
+          AddMessage('Automation daemon listening on named pipe: ' + xeAutomationServeLoopPipeName);
+        end;
+
         if wbFirstLoadComplete then
           Exit;
 
@@ -21337,7 +21952,7 @@ begin
           {$IFDEF USE_PARALLEL_BUILD_REFS}
           wbBuildingRefsParallel := True;
           try
-            TParallel.&For(Low(ltFiles), High(ltFiles), procedure(lLoadListIdx: Integer)
+            TParallel.&For(Low(ltFiles), High(ltFiles), procedure(lLoadListIdx: Integer; LoopState: TParallel.TLoopState)
             var
               OnlyLoad : Boolean;
               _File    : IwbFile;
@@ -21391,8 +22006,10 @@ begin
                         wbLoaderError := True;
                       end;
                     end;
-                    if wbLoaderError or wbForceTerminate then
+                    if wbLoaderError or wbForceTerminate then begin
+                      LoopState.Stop;
                       Exit;
+                    end;
                   end;
                 end;
                   {$IFDEF USE_PARALLEL_BUILD_REFS}
@@ -22029,7 +22646,7 @@ begin
       J.Free;
     end;
   except end;
-  Synchronize(procedure begin
+  TThread.Synchronize(nil, procedure begin
     if Assigned(frmMain) then begin
       frmMain.GitHubVersion := vmax;
       frmMain.ShowGitHubHint := Now + (1/24/60/6); // 10 seconds
@@ -22067,7 +22684,7 @@ begin
       end;
     end;
   except end;
-  Synchronize(procedure begin
+  TThread.Synchronize(nil, procedure begin
     if Assigned(frmMain) then begin
       frmMain.NexusModsVersion := vmax;
       frmMain.ShowNexusModsHint := Now + (1/24/60/6); // 10 seconds

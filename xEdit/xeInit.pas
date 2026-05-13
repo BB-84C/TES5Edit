@@ -90,6 +90,9 @@ uses
   wbDefinitionsTES5Saves,
   wbDefinitionsSF1,
   wbSteamVDFParser,
+  xeAutomationSession,
+  xeAutomationTransportPipe,
+  xeAutomationTypes,
   xeScriptHost;
 
 function xeCheckForValidExtension(const aFilePath : string): Boolean;
@@ -712,8 +715,17 @@ var
   ToolSources: TwbSetOfSource;
   i: Integer;
   ExeName: string;
+  lAutomationCliRequestSpecified: Boolean;
+  lAutomationCliResponseSpecified: Boolean;
+  lAutomationServeSpecified: Boolean;
+  lAutomationCallPidSpecified: Boolean;
+  lAutomationCallRequestSpecified: Boolean;
+  lAutomationCallResponseSpecified: Boolean;
+  lAutomationCallPidValue: Cardinal;
 begin
   ExeName := ChangeFileExt(ExtractFileName(ParamStr(0)), '').ToLowerInvariant;
+
+  xeAutomationResetSession;
 
   if not wbIsAeroEnabled then
     wbThemesSupported := False;
@@ -1497,6 +1509,47 @@ begin
   else if xeAutoGameLink then
     wbSubMode := 'Auto Game Link';
 
+  // Capture CLI automation inputs during startup so the rest of initialization
+  // can react to a single piece of session state. We keep the raw switch-presence
+  // booleans here so partial automation invocations still enter the headless path
+  // and fail fast instead of drifting into normal GUI startup.
+  lAutomationCliRequestSpecified := wbFindCmdLineParam('automation-cli-request', xeAutomationCliRequestPath);
+  lAutomationCliResponseSpecified := wbFindCmdLineParam('automation-cli-response', xeAutomationCliResponsePath);
+  lAutomationServeSpecified := FindCmdLineSwitch('automation-serve');
+  lAutomationCallPidSpecified := wbFindCmdLineParam('automation-call-pid', s);
+  if lAutomationCallPidSpecified and TryStrToUInt(Trim(s), lAutomationCallPidValue) then
+    xeAutomationCallPid := lAutomationCallPidValue;
+  lAutomationCallRequestSpecified := wbFindCmdLineParam('automation-call-request', xeAutomationCallRequestPath);
+  lAutomationCallResponseSpecified := wbFindCmdLineParam('automation-call-response', xeAutomationCallResponsePath);
+  xeAutomationUpdateMode(
+    lAutomationCliRequestSpecified,
+    lAutomationCliResponseSpecified,
+    lAutomationServeSpecified,
+    lAutomationCallPidSpecified,
+    lAutomationCallRequestSpecified,
+    lAutomationCallResponseSpecified
+  );
+  if xeAutomationMode = xamServe then
+    // Serve mode must reuse xEdit's normal load path, but it cannot stop for the
+    // usual selection dialogs because the named pipe is only created after load completion.
+    xeAutoLoad := True;
+  if (xeAutomationMode = xamCall) and xeAutomationCallPidIsValid then begin
+    // The daemon PID tells us which instance to target, but it is not a
+    // transport by itself. We derive the pipe name now so later tasks can reuse
+    // one session field instead of rebuilding the rendezvous rule everywhere.
+    // Malformed call-pid input stays visible in session state, but does not get a
+    // misleading pipe name derived from the sentinel pid value of 0.
+    xeAutomationCallPipeName := xeAutomationPipeNameForPid(xeAutomationCallPid);
+  end;
+  case xeAutomationMode of
+    xamCli:
+      wbSubMode := 'Automation CLI';
+    xamServe:
+      wbSubMode := 'Automation Serve';
+    xamCall:
+      wbSubMode := 'Automation Call';
+  end;
+
   if not wbFindCmdLineParam('scripthost', s) then
     s := xeDefaultScriptHost;
   TxeScriptHost.Init(s);
@@ -1508,7 +1561,7 @@ begin
   {$IFDEF WIN64}
   wbApplicationTitle := wbApplicationTitle + ' x64';
   {$ENDIF WIN64}
-  if wbSubMode <> '' then
+  if (wbSubMode <> '') and (xeAutomationMode = xamNone) then
     wbApplicationTitle := wbApplicationTitle + ' (' + wbSubMode + ')';
 
   if xeAutoLoad then
@@ -1516,6 +1569,15 @@ begin
 
   if xeAutoExit then
     wbApplicationTitle := wbApplicationTitle + ' [Auto Exit]';
+
+  case xeAutomationMode of
+    xamCli:
+      wbApplicationTitle := wbApplicationTitle + ' [Automation CLI]';
+    xamServe:
+      wbApplicationTitle := wbApplicationTitle + ' [Automation Serve]';
+    xamCall:
+      wbApplicationTitle := wbApplicationTitle + ' [Automation Call]';
+  end;
 
   if FindCmdLineSwitch('nobuildrefs') then
     wbBuildRefs := False;

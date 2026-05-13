@@ -2,7 +2,7 @@
     <PropertyGroup>
         <Base>True</Base>
         <AppType>Application</AppType>
-        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Config Condition="'$(Config)'==''">LiteDebug</Config>
         <FrameworkType>VCL</FrameworkType>
         <MainSource>xEdit.dpr</MainSource>
         <Platform Condition="'$(Platform)'==''">Win32</Platform>
@@ -126,6 +126,31 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="xEdit\xeAutomationCommandsCleaning.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsElements.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsFileHygiene.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsFiles.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsJobs.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsPluginAnalysis.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsRecords.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsSession.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsSessionNavigation.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsScripts.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsSystem.pas"/>
+        <DCCReference Include="xEdit\xeAutomationCommandsValidation.pas"/>
+        <DCCReference Include="xEdit\xeAutomationConflictSnapshot.pas"/>
+        <DCCReference Include="xEdit\xeAutomationDataLookup.pas"/>
+        <DCCReference Include="xEdit\xeAutomationErrors.pas"/>
+        <DCCReference Include="xEdit\xeAutomationGuiSnapshot.pas"/>
+        <DCCReference Include="xEdit\xeAutomationHostCli.pas"/>
+        <DCCReference Include="xEdit\xeAutomationJobs.pas"/>
+        <DCCReference Include="xEdit\xeAutomationMutationPolicy.pas"/>
+        <DCCReference Include="xEdit\xeAutomationObjectModel.pas"/>
+        <DCCReference Include="xEdit\xeAutomationRegistry.pas"/>
+        <DCCReference Include="xEdit\xeAutomationServeLoop.pas"/>
+        <DCCReference Include="xEdit\xeAutomationSession.pas"/>
+        <DCCReference Include="xEdit\xeAutomationTransportPipe.pas"/>
+        <DCCReference Include="xEdit\xeAutomationTypes.pas"/>
         <DCCReference Include="xEdit\xeInit.pas"/>
         <DCCReference Include="Core\wbBetterStringList.pas"/>
         <DCCReference Include="Core\wbBSA.pas"/>
@@ -216,6 +241,9 @@
         <DCCReference Include="xEdit\JvI\xejviScriptAdapter.pas"/>
         <DCCReference Include="xEdit\JvI\xejviScriptAdapterDF.pas"/>
         <DCCReference Include="xEdit\JvI\xejviScriptAdapterMisc.pas"/>
+        <DCCReference Include="xEdit\xeScriptExecutionGuard.pas"/>
+        <DCCReference Include="xEdit\xeHeadlessJvIScriptHost.pas"/>
+        <DCCReference Include="xEdit\xeScriptRuntimePolicy.pas"/>
         <DCCReference Include="xEdit\xeScriptForm.pas">
             <Form>frmScript</Form>
             <FormType>dfm</FormType>
@@ -241,20 +269,20 @@
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
-        <BuildConfiguration Include="Release">
-            <Key>Cfg_1</Key>
-            <CfgParent>Base</CfgParent>
-        </BuildConfiguration>
         <BuildConfiguration Include="Debug">
             <Key>Cfg_2</Key>
             <CfgParent>Base</CfgParent>
         </BuildConfiguration>
-        <BuildConfiguration Include="DebugFO">
-            <Key>Cfg_3</Key>
-            <CfgParent>Cfg_2</CfgParent>
-        </BuildConfiguration>
         <BuildConfiguration Include="LiteDebug">
             <Key>Cfg_4</Key>
+            <CfgParent>Cfg_2</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="Release">
+            <Key>Cfg_1</Key>
+            <CfgParent>Base</CfgParent>
+        </BuildConfiguration>
+        <BuildConfiguration Include="DebugFO">
+            <Key>Cfg_3</Key>
             <CfgParent>Cfg_2</CfgParent>
         </BuildConfiguration>
         <BuildConfiguration Include="DebugSF">

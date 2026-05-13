@@ -40,6 +40,31 @@ uses
   Vcl.Styles.Utils.Forms,
   Vcl.Styles.Utils.StdCtrls,
   Vcl.Styles.Utils.ScreenTips,
+  xeAutomationCommandsCleaning in 'xEdit\xeAutomationCommandsCleaning.pas',
+  xeAutomationCommandsElements in 'xEdit\xeAutomationCommandsElements.pas',
+  xeAutomationCommandsFileHygiene in 'xEdit\xeAutomationCommandsFileHygiene.pas',
+  xeAutomationCommandsFiles in 'xEdit\xeAutomationCommandsFiles.pas',
+  xeAutomationCommandsJobs in 'xEdit\xeAutomationCommandsJobs.pas',
+  xeAutomationCommandsPluginAnalysis in 'xEdit\xeAutomationCommandsPluginAnalysis.pas',
+  xeAutomationCommandsRecords in 'xEdit\xeAutomationCommandsRecords.pas',
+  xeAutomationCommandsSession in 'xEdit\xeAutomationCommandsSession.pas',
+  xeAutomationCommandsSessionNavigation in 'xEdit\xeAutomationCommandsSessionNavigation.pas',
+  xeAutomationCommandsScripts in 'xEdit\xeAutomationCommandsScripts.pas',
+  xeAutomationCommandsSystem in 'xEdit\xeAutomationCommandsSystem.pas',
+  xeAutomationCommandsValidation in 'xEdit\xeAutomationCommandsValidation.pas',
+  xeAutomationConflictSnapshot in 'xEdit\xeAutomationConflictSnapshot.pas',
+  xeAutomationDataLookup in 'xEdit\xeAutomationDataLookup.pas',
+  xeAutomationErrors in 'xEdit\xeAutomationErrors.pas',
+  xeAutomationGuiSnapshot in 'xEdit\xeAutomationGuiSnapshot.pas',
+  xeAutomationHostCli in 'xEdit\xeAutomationHostCli.pas',
+  xeAutomationJobs in 'xEdit\xeAutomationJobs.pas',
+  xeAutomationMutationPolicy in 'xEdit\xeAutomationMutationPolicy.pas',
+  xeAutomationObjectModel in 'xEdit\xeAutomationObjectModel.pas',
+  xeAutomationRegistry in 'xEdit\xeAutomationRegistry.pas',
+  xeAutomationServeLoop in 'xEdit\xeAutomationServeLoop.pas',
+  xeAutomationSession in 'xEdit\xeAutomationSession.pas',
+  xeAutomationTransportPipe in 'xEdit\xeAutomationTransportPipe.pas',
+  xeAutomationTypes in 'xEdit\xeAutomationTypes.pas',
   xeInit in 'xEdit\xeInit.pas',
   wbBetterStringList in 'Core\wbBetterStringList.pas',
   wbBSA in 'Core\wbBSA.pas',
@@ -93,6 +118,9 @@ uses
   xejviScriptAdapter in 'xEdit\JvI\xejviScriptAdapter.pas',
   xejviScriptAdapterDF in 'xEdit\JvI\xejviScriptAdapterDF.pas',
   xejviScriptAdapterMisc in 'xEdit\JvI\xejviScriptAdapterMisc.pas',
+  xeScriptExecutionGuard in 'xEdit\xeScriptExecutionGuard.pas',
+  xeHeadlessJvIScriptHost in 'xEdit\xeHeadlessJvIScriptHost.pas',
+  xeScriptRuntimePolicy in 'xEdit\xeScriptRuntimePolicy.pas',
   xeScriptForm in 'xEdit\xeScriptForm.pas' {frmScript},
   xeTipForm in 'xEdit\xeTipForm.pas', {frmTip}
   xeViewElementsForm in 'xEdit\xeViewElementsForm.pas' {frmViewElements},
@@ -109,6 +137,9 @@ uses
 
 const
   IMAGE_FILE_LARGE_ADDRESS_AWARE = $0020;
+
+var
+  lAutomationExitCode: Integer;
 
 {$SetPEFlags IMAGE_FILE_LARGE_ADDRESS_AWARE}
 
@@ -136,6 +167,25 @@ begin
   nxEHAppVersion := wbApplicationTitle;
   {$ENDIF}
   Application.Title := wbApplicationTitle;
+
+  // Keep the lightweight one-shot CLI path for existing `system.*` style calls;
+  // daemon serve/call mode is being added alongside it for loaded-data sessions.
+  if xeAutomationHasConflictingModes then begin
+    if xeAutomationTryRejectInvalidSetup('Conflicting automation modes were requested', lAutomationExitCode) then begin
+      ExitCode := lAutomationExitCode;
+      Exit;
+    end;
+  end;
+
+  // Run automation requests before the main form exists so scripted
+  // callers get a deterministic headless path that is independent of UI lifecycle state.
+  if xeAutomationCliRequested or (xeAutomationMode = xamCall) then begin
+    if xeAutomationTryRunCli(lAutomationExitCode) then begin
+      ExitCode := lAutomationExitCode;
+      Exit;
+    end;
+  end;
+
   try
     Application.CreateForm(TfrmMain, frmMain);
     Application.Run;
