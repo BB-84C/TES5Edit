@@ -10,7 +10,17 @@ Please do not use the tracker for general help and support on how to use xEdit.
 
 ## Releases
 
-The most recent builds are available through the [xEdit Discord](https://discord.com/invite/5t8RnNQ) in the `#xedit-builds` channel. The archive provided here is generic and works with all current game modes. See the [xEdit Versions](#xedit-versions) table in this document on how to properly use it.
+If you just want to use xEdit, download a prebuilt release package. You do **not** need Delphi, RAD Studio, or a local source build unless you plan to modify xEdit yourself.
+
+### Using a release package
+
+1. Download the latest prebuilt archive from the [xEdit Discord](https://discord.com/invite/5t8RnNQ) `#xedit-builds` channel, the Nexus page for your game, or the [GitHub releases mirror](https://github.com/TES5Edit/TES5Edit/releases).
+2. Extract the archive to a normal tools folder, for example `C:\Modding\xEdit\`. Do **not** extract it into your game's `Data` folder.
+3. The archive is generic and works with all current game modes.
+4. Start `xEdit.exe` with the game argument shown in the [xEdit Versions](#xedit-versions) table below, or rename/copy `xEdit.exe` to the matching game-specific executable name from that table.
+5. Example: for Fallout 4, either run `xEdit.exe -FO4` or rename/copy the executable to `FO4Edit.exe` and launch that.
+
+The most recent builds are available through the [xEdit Discord](https://discord.com/invite/5t8RnNQ) in the `#xedit-builds` channel. The archive provided there is a prebuilt generic package that works with all current game modes. See the [xEdit Versions](#xedit-versions) table in this document on how to properly use it.
 
 Less frequently updated already renamed packages can be found on the following pages:
 
@@ -57,6 +67,8 @@ However, for now consider what the Tome of xEdit presents as a current resource 
 The online documentation is available from the Help button built into the developmental version of xEdit or you can view it [from here](https://tes5edit.github.io/docs/).
 
 ## Developer Documentation
+
+This section is only for contributors who want to build xEdit from source. If you only want to run a release package, use the instructions in [Releases](#releases) and [xEdit Versions](#xedit-versions) above.
 
 Getting started with xEdit development requires a properly configured Delphi environment. The following instructions should get you through the minimal viable setup.
 
