@@ -18035,6 +18035,11 @@ begin
   if wbToolMode in wbAutoModes then
     Exit;
 
+  // Automation serve/call mode owns persistence through explicit automation commands;
+  // do not let the normal GUI reminder interrupt batch automation.
+  if xeAutomationDaemonRequested then
+    Exit;
+
   if not ShowUnsavedHint then
     Exit;
 
