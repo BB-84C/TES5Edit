@@ -88,8 +88,10 @@ type
     FAgentScriptsDir: string;
     FEntryScriptUnderAgentRoot: Boolean;
     FTargets: TxeHeadlessTargetElements;
+    FFiles: TwbFiles;
     procedure AddCapturedMessage(const AMessage: string);
     procedure CallScriptFunction(const AName: string; const AParams: array of Variant);
+    procedure CacheLoadedFiles;
     procedure FailScript(const ACode, AMessage: string);
     procedure JvInterpreterProgramGetValue(Sender: TObject; Identifier: string; var Value: Variant;
       Args: TJvInterpreterArgs; var Done: Boolean);
@@ -262,6 +264,30 @@ begin
     FailScript(xeHeadlessScriptErrorFailed, Format('%s returned %s', [AName, VarToStr(lReturn)]));
 end;
 
+procedure TxeHeadlessJvIHost.CacheLoadedFiles;
+var
+  lModules: TwbModuleInfos;
+  lFile: IwbFile;
+  lFileCount: Integer;
+  i: Integer;
+begin
+  // Snapshot loaded plugin files once per run so frequent JvInterpreter identifier
+  // lookups do not rescan the global load-order module list.
+  lModules := wbModulesByLoadOrder;
+  SetLength(FFiles, Length(lModules));
+
+  lFileCount := 0;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if Assigned(lFile) then begin
+      FFiles[lFileCount] := lFile;
+      Inc(lFileCount);
+    end;
+  end;
+
+  SetLength(FFiles, lFileCount);
+end;
+
 procedure TxeHeadlessJvIHost.FailScript(const ACode, AMessage: string);
 begin
   FResult.ScriptFailed := True;
@@ -273,20 +299,8 @@ end;
 procedure TxeHeadlessJvIHost.JvInterpreterProgramGetValue(Sender: TObject; Identifier: string; var Value: Variant;
   Args: TJvInterpreterArgs; var Done: Boolean);
 var
-  Files: TwbFiles;
-  lFile: IwbFile;
-  lModules: TwbModuleInfos;
   i: Integer;
 begin
-  lModules := wbModulesByLoadOrder;
-  for i := Low(lModules) to High(lModules) do begin
-    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
-    if Assigned(lFile) then begin
-      SetLength(Files, Succ(Length(Files)));
-      Files[High(Files)] := lFile;
-    end;
-  end;
-
   // The headless host intentionally exposes only daemon-safe callbacks. GUI-only
   // objects such as frmMain/frmFileSelect are explicitly denied below so runtime
   // denial semantics are preserved without exposing real GUI host objects.
@@ -323,31 +337,33 @@ begin
   end else if SameText(Identifier, 'FileCount') and (Args.Count = 0) then begin
     // Loaded-file globals are daemon-safe object-model entry points, not GUI hooks:
     // they let common xEdit scripts reach IwbFile objects without exposing frmMain.
-    Value := Length(Files);
+    Value := Length(FFiles);
     Done := True;
   end else if SameText(Identifier, 'FileByIndex') then begin
     if (Args.Count = 1) and VarIsNumeric(Args.Values[0]) and
-      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(Files)) then begin
-      Value := Files[Integer(Args.Values[0])];
+      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(FFiles)) then begin
+      Value := FFiles[Integer(Args.Values[0])];
       Done := True;
     end else
       JvInterpreterError(ieDirectInvalidArgument, 0);
   end else if SameText(Identifier, 'FileByLoadOrderFileID') then begin
     if (Args.Count = 1) and VarIsStr(Args.Values[0]) then begin
-      for i := Low(Files) to High(Files) do
-        if Files[i].LoadOrderFileID.ToString = Args.Values[0] then begin
-          Value := Files[i];
+      for i := Low(FFiles) to High(FFiles) do
+        if FFiles[i].LoadOrderFileID.ToString = Args.Values[0] then begin
+          Value := FFiles[i];
           Break;
         end;
       Done := True;
     end else
       JvInterpreterError(ieDirectInvalidArgument, 0);
   end else if SameText(Identifier, 'FileByLoadOrder') then begin
+    // Keep the GUI host bounds check: common scripts see the same rejection shape
+    // for negative or beyond-file-count numeric load-order arguments.
     if (Args.Count = 1) and VarIsNumeric(Args.Values[0]) and
-      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(Files)) then begin
-      for i := Low(Files) to High(Files) do
-        if Files[i].LoadOrder = Integer(Args.Values[0]) then begin
-          Value := Files[i];
+      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(FFiles)) then begin
+      for i := Low(FFiles) to High(FFiles) do
+        if FFiles[i].LoadOrder = Integer(Args.Values[0]) then begin
+          Value := FFiles[i];
           Break;
         end;
       Done := True;
@@ -355,9 +371,9 @@ begin
       JvInterpreterError(ieDirectInvalidArgument, 0);
   end else if SameText(Identifier, 'FileByName') then begin
     if (Args.Count = 1) and VarIsStr(Args.Values[0]) then begin
-      for i := Low(Files) to High(Files) do
-        if SameText(Args.Values[0], Files[i].FileName) then begin
-          Value := Files[i];
+      for i := Low(FFiles) to High(FFiles) do
+        if SameText(Args.Values[0], FFiles[i].FileName) then begin
+          Value := FFiles[i];
           Break;
         end;
       Done := True;
@@ -471,6 +487,8 @@ begin
 
         FResult.ScriptLastPhase := 'resolve_targets';
         ResolveTargets;
+
+        CacheLoadedFiles;
 
         FProgram := TJvInterpreterProgram.Create(nil);
         FProgram.OnGetValue := JvInterpreterProgramGetValue;
