@@ -152,8 +152,10 @@ begin
   end;
 
   if lWritten <> Cardinal(Length(aBytes)) then begin
+    // External pipe clients can race close/read timing on the nonblocking
+    // message pipe; treat peer loss as connection-local, not daemon-fatal.
     xeAutomationServeLoopResetPipe;
-    raise Exception.Create('Automation daemon pipe write was incomplete');
+    Exit;
   end;
 end;
 
