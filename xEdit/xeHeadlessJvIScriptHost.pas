@@ -272,7 +272,21 @@ end;
 
 procedure TxeHeadlessJvIHost.JvInterpreterProgramGetValue(Sender: TObject; Identifier: string; var Value: Variant;
   Args: TJvInterpreterArgs; var Done: Boolean);
+var
+  Files: TwbFiles;
+  lFile: IwbFile;
+  lModules: TwbModuleInfos;
+  i: Integer;
 begin
+  lModules := wbModulesByLoadOrder;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if Assigned(lFile) then begin
+      SetLength(Files, Succ(Length(Files)));
+      Files[High(Files)] := lFile;
+    end;
+  end;
+
   // The headless host intentionally exposes only daemon-safe callbacks. GUI-only
   // objects such as frmMain/frmFileSelect are explicitly denied below so runtime
   // denial semantics are preserved without exposing real GUI host objects.
@@ -306,6 +320,49 @@ begin
   end else if (SameText(Identifier, 'TempPath') or SameText(Identifier, 'wbTempPath')) and (Args.Count = 0) then begin
     Value := wbTempPath;
     Done := True;
+  end else if SameText(Identifier, 'FileCount') and (Args.Count = 0) then begin
+    // Loaded-file globals are daemon-safe object-model entry points, not GUI hooks:
+    // they let common xEdit scripts reach IwbFile objects without exposing frmMain.
+    Value := Length(Files);
+    Done := True;
+  end else if SameText(Identifier, 'FileByIndex') then begin
+    if (Args.Count = 1) and VarIsNumeric(Args.Values[0]) and
+      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(Files)) then begin
+      Value := Files[Integer(Args.Values[0])];
+      Done := True;
+    end else
+      JvInterpreterError(ieDirectInvalidArgument, 0);
+  end else if SameText(Identifier, 'FileByLoadOrderFileID') then begin
+    if (Args.Count = 1) and VarIsStr(Args.Values[0]) then begin
+      for i := Low(Files) to High(Files) do
+        if Files[i].LoadOrderFileID.ToString = Args.Values[0] then begin
+          Value := Files[i];
+          Break;
+        end;
+      Done := True;
+    end else
+      JvInterpreterError(ieDirectInvalidArgument, 0);
+  end else if SameText(Identifier, 'FileByLoadOrder') then begin
+    if (Args.Count = 1) and VarIsNumeric(Args.Values[0]) and
+      (Integer(Args.Values[0]) >= 0) and (Integer(Args.Values[0]) < Length(Files)) then begin
+      for i := Low(Files) to High(Files) do
+        if Files[i].LoadOrder = Integer(Args.Values[0]) then begin
+          Value := Files[i];
+          Break;
+        end;
+      Done := True;
+    end else
+      JvInterpreterError(ieDirectInvalidArgument, 0);
+  end else if SameText(Identifier, 'FileByName') then begin
+    if (Args.Count = 1) and VarIsStr(Args.Values[0]) then begin
+      for i := Low(Files) to High(Files) do
+        if SameText(Args.Values[0], Files[i].FileName) then begin
+          Value := Files[i];
+          Break;
+        end;
+      Done := True;
+    end else
+      JvInterpreterError(ieDirectInvalidArgument, 0);
   end else if SameText(Identifier, 'frmMain') and (Args.Count = 0) then
     JvInterpreterErrorN(ieAccessDenied, 0,
       'frmMain: runtime policy denied by ledger classification deny_host_gui_hook')
