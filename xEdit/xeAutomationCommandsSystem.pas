@@ -158,8 +158,10 @@ begin
   Result.O['supports'].O['filesCreate'].A['extensions'].Add('.esl');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esm');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esl');
-  Result.O['supports'].O['recordsCreate'].A['signatures'].Add('KYWD');
-  Result.O['supports'].O['recordsCreate'].A['signatures'].Add('MISC');
+  Result.O['supports'].O['filesCreate'].A['flags'].Add('medium');
+  // records.create intentionally has no protocol-side signature allow-list; xEdit's
+  // native group/record Add path owns support decisions for the active game mode.
+  Result.O['supports'].O['recordsCreate'].S['signaturePolicy'] := 'native-xedit-add';
   Result.O['supports'].O['scripts'].O['namespaces'].A['runnable'].Add('');
   Result.O['supports'].O['scripts'].O['namespaces'].A['runnable'].Add('Agent');
   Result.O['supports'].O['scripts'].O['namespaces'].A['writable'].Add('Agent');
@@ -227,6 +229,7 @@ begin
   Result.O['supports'].O['fileHygiene'].A['commands'].Add('files.clean_masters');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('esm');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('esl');
+  Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('medium');
   Result.O['supports'].O['fileHygiene'].S['saveBoundary'] := 'explicit_session_save';
 end;
 

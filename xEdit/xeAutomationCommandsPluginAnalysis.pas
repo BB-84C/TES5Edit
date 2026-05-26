@@ -137,6 +137,7 @@ begin
   Result := TJsonObject.Create;
   Result.B['esm'] := AFile.IsESM;
   Result.B['esl'] := AFile.IsLight;
+  Result.B['medium'] := AFile.IsMedium;
 end;
 
 function xeAutomationReadBooleanOption(const AOptions: TJsonObject; const AName: string; const ADefault: Boolean): Boolean;
@@ -277,26 +278,21 @@ begin
         AMinObjectId, AHasCellRisk);
 end;
 
-procedure xeAutomationCollectEslRecordStatsFromGroup(const AFile: IwbFile; const ASignature: TwbSignature;
+procedure xeAutomationCollectEslRecordStatsFromVisibleGroups(const AFile: IwbFile;
   const ASeenRecords: TDictionary<Cardinal, Boolean>; var ANewRecordCount: Integer; var AMaxObjectId: Cardinal;
   var AMinObjectId: Cardinal; var AHasCellRisk: Boolean);
 var
+  lContainer: IwbContainer;
   lGroup: IwbGroupRecord;
-  lObjectId: Cardinal;
-  lFormId: TwbFormID;
-  lRecord: IwbMainRecord;
+  i: Integer;
 begin
-  lGroup := AFile.GroupBySignature[ASignature];
-  if not Assigned(lGroup) then
+  if not Supports(AFile, IwbContainer, lContainer) then
     Exit;
 
-  xeAutomationCollectEslRecordStatsFromElement(AFile, lGroup, ASeenRecords, ANewRecordCount, AMaxObjectId, AMinObjectId, AHasCellRisk);
-  for lObjectId := 1 to $FFFF do begin
-    lFormId := TwbFormID.FromCardinal(lObjectId).ChangeFileID(AFile.LoadOrderFileID);
-    lRecord := lGroup.MainRecordByFormID[lFormId];
-    if Assigned(lRecord) then
-      xeAutomationAddEslRecordStats(AFile, lRecord, ASeenRecords, ANewRecordCount, AMaxObjectId, AMinObjectId, AHasCellRisk);
-  end;
+  for i := 0 to Pred(lContainer.ElementCount) do
+    if Supports(lContainer.Elements[i], IwbGroupRecord, lGroup) then
+      xeAutomationCollectEslRecordStatsFromElement(AFile, lGroup, ASeenRecords, ANewRecordCount, AMaxObjectId, AMinObjectId,
+        AHasCellRisk);
 end;
 
 procedure xeAutomationCollectEslRecordStatsByObjectIdScan(const AFile: IwbFile;
@@ -351,11 +347,12 @@ begin
     lSeenRecords := TDictionary<Cardinal, Boolean>.Create;
     try
       xeAutomationCollectEslRecordStatsFromElement(AFile, AFile, lSeenRecords, lNewRecordCount, lMaxObjectId, lMinObjectId, lHasCellRisk);
-      // The current automation creation surface can leave fresh KYWD/MISC records in
-      // signature groups before the file's shallow record view catches up. Probe those
-      // groups explicitly so read-only analysis reflects the live unsaved session.
-      xeAutomationCollectEslRecordStatsFromGroup(AFile, 'KYWD', lSeenRecords, lNewRecordCount, lMaxObjectId, lMinObjectId, lHasCellRisk);
-      xeAutomationCollectEslRecordStatsFromGroup(AFile, 'MISC', lSeenRecords, lNewRecordCount, lMaxObjectId, lMinObjectId, lHasCellRisk);
+      // The automation creation surface can leave fresh records in signature groups
+      // before the file's shallow record view catches up. Probe all currently visible
+      // top-level groups instead of baking a protocol-side signature allow-list into
+      // analysis, then keep the ObjectID scan below as a fallback for tiny new files.
+      xeAutomationCollectEslRecordStatsFromVisibleGroups(AFile, lSeenRecords, lNewRecordCount, lMaxObjectId, lMinObjectId,
+        lHasCellRisk);
       // Unsaved new-file groups can also be visible through FormID lookup before
       // shallow record enumeration reflects them, so bounded ObjectID probing keeps
       // fresh automation fixtures and small plugins honest without scanning DLC scale.

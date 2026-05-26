@@ -230,7 +230,7 @@ begin
     raise xeAutomationInvalidRequest('Automation arg "fileName" must end with .esp, .esm, or .esl');
 end;
 
-procedure xeAutomationReadCreateFlags(const AArgs: TJsonObject; out AIsESM, AIsLight: Boolean);
+procedure xeAutomationReadCreateFlags(const AArgs: TJsonObject; out AIsESM, AIsLight, AIsMedium: Boolean);
 var
   lFlags: TJsonObject;
   lName: string;
@@ -238,6 +238,7 @@ var
 begin
   AIsESM := False;
   AIsLight := False;
+  AIsMedium := False;
   if not Assigned(AArgs) or not AArgs.Contains('flags') then
     Exit;
 
@@ -247,11 +248,9 @@ begin
   lFlags := AArgs.O['flags'];
   for i := 0 to Pred(lFlags.Count) do begin
     lName := lFlags.Names[i];
-    // Flags are intentionally allow-listed so future xEdit header bits do not become
-    // accidental public API before the automation contract names them explicitly.
-    if SameText(lName, 'medium') then
-      raise xeAutomationInvalidRequest('Automation files.create flag "medium" is not supported');
-    if not SameText(lName, 'esm') and not SameText(lName, 'esl') then
+    // Flags are intentionally named at the protocol boundary so automation exposes
+    // Bethesda plugin header bits deliberately while still rejecting typos.
+    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and not SameText(lName, 'medium') then
       raise xeAutomationInvalidRequest(Format('Automation files.create flag "%s" is not supported', [lName]));
     if lFlags.Types[lName] <> jdtBool then
       raise xeAutomationInvalidRequest(Format('Automation files.create flag "%s" must be a boolean', [lName]));
@@ -261,9 +260,11 @@ begin
     AIsESM := lFlags.B['esm'];
   if lFlags.Contains('esl') then
     AIsLight := lFlags.B['esl'];
+  if lFlags.Contains('medium') then
+    AIsMedium := lFlags.B['medium'];
 end;
 
-procedure xeAutomationValidateCreateShape(const AFileName: string; const AIsESM, AIsLight: Boolean);
+procedure xeAutomationValidateCreateShape(const AFileName: string; const AIsESM, AIsLight, AIsMedium: Boolean);
 var
   lExt: string;
 begin
@@ -276,6 +277,8 @@ begin
     raise xeAutomationInvalidRequest('Automation .esm files must not set flags.esl true');
   if SameText(lExt, '.esl') and (not AIsESM or not AIsLight) then
     raise xeAutomationInvalidRequest('Automation .esl files must set flags.esm and flags.esl true');
+  if AIsLight and AIsMedium then
+    raise xeAutomationInvalidRequest('Automation files.create must not set flags.esl and flags.medium true together');
 end;
 
 procedure xeAutomationRequireNoExistingNewFile(const AFileName: string);
@@ -341,6 +344,7 @@ var
   lTemplate: string;
   lIsESM: Boolean;
   lIsLight: Boolean;
+  lIsMedium: Boolean;
   lInitialMasters: TStringDynArray;
   lRequestedMasters: TStringList;
   lMasterReport: TJsonObject;
@@ -361,8 +365,8 @@ begin
   if (lTemplate <> '') and not SameText(lTemplate, xeAutomationFilesCreateTemplateEmpty) then
     raise xeAutomationInvalidRequest(Format('Automation files.create template "%s" is not supported', [lTemplate]));
 
-  xeAutomationReadCreateFlags(AArgs, lIsESM, lIsLight);
-  xeAutomationValidateCreateShape(lFileName, lIsESM, lIsLight);
+  xeAutomationReadCreateFlags(AArgs, lIsESM, lIsLight, lIsMedium);
+  xeAutomationValidateCreateShape(lFileName, lIsESM, lIsLight, lIsMedium);
   xeAutomationRequireNoExistingNewFile(lFileName);
   if not wbEditAllowed then
     raise xeAutomationReadOnlyTarget('Automation mutation requires edit mode');
@@ -371,7 +375,7 @@ begin
   lRequestedMasters := xeAutomationRequestedMastersFromNames(lFileName, lInitialMasters);
   try
     try
-      lFile := wbNewFile(wbDataPath + lFileName, xeAutomationNextNewFileLoadOrder, lIsLight, False);
+      lFile := wbNewFile(wbDataPath + lFileName, xeAutomationNextNewFileLoadOrder, lIsLight, lIsMedium);
       // wbNewFile handles light/medium allocation, but ESM header intent remains a
       // post-create file flag so .esm/.esl and explicit ESM plugins match xEdit state.
       if lIsESM or SameText(ExtractFileExt(lFileName), '.esm') or SameText(ExtractFileExt(lFileName), '.esl') then

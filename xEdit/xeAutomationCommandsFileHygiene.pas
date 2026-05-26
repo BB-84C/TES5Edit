@@ -30,6 +30,7 @@ type
   TxeAutomationHeaderFlags = record
     ESM: Boolean;
     ESL: Boolean;
+    Medium: Boolean;
   end;
 
   TxeAutomationBatchOperation = (xaboSortMasters, xaboCleanMasters);
@@ -49,6 +50,7 @@ begin
   Result := TJsonObject.Create;
   Result.B['esm'] := AFile.IsESM;
   Result.B['esl'] := AFile.IsLight;
+  Result.B['medium'] := AFile.IsMedium;
 end;
 
 function xeAutomationMasterLoadOrder(const AMaster: IwbFile): Integer;
@@ -131,7 +133,7 @@ begin
 end;
 
 function xeAutomationReadRequestedHeaderFlags(const AArgs: TJsonObject; out AFlags: TxeAutomationHeaderFlags;
-  out AHasESM, AHasESL: Boolean): TJsonObject;
+  out AHasESM, AHasESL, AHasMedium: Boolean): TJsonObject;
 var
   lName: string;
   i: Integer;
@@ -147,15 +149,15 @@ begin
   Result := AArgs.O['flags'];
   AHasESM := False;
   AHasESL := False;
+  AHasMedium := False;
   AFlags.ESM := False;
   AFlags.ESL := False;
+  AFlags.Medium := False;
   for i := 0 to Pred(Result.Count) do begin
     lName := Result.Names[i];
-    // Header flags are allow-listed at the protocol boundary so unsupported bits
-    // like medium cannot become accidental API surface ahead of contract 0.6.
-    if SameText(lName, 'medium') then
-      raise xeAutomationInvalidRequest('Automation files.set_header_flags flag "medium" is not supported');
-    if not SameText(lName, 'esm') and not SameText(lName, 'esl') then
+    // Header flags are named at the protocol boundary so typos still fail while
+    // current xEdit-supported plugin flags, including Starfield medium, remain reachable.
+    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and not SameText(lName, 'medium') then
       raise xeAutomationInvalidRequest(Format('Automation files.set_header_flags flag "%s" is not supported', [lName]));
     if Result.Types[lName] <> jdtBool then
       raise xeAutomationInvalidRequest(Format('Automation files.set_header_flags flag "%s" must be a boolean', [lName]));
@@ -166,6 +168,9 @@ begin
     end else if SameText(lName, 'esl') then begin
       AHasESL := True;
       AFlags.ESL := Result.B[lName];
+    end else if SameText(lName, 'medium') then begin
+      AHasMedium := True;
+      AFlags.Medium := Result.B[lName];
     end;
   end;
 end;
@@ -198,8 +203,10 @@ var
   lFlags: TxeAutomationHeaderFlags;
   lHasESM: Boolean;
   lHasESL: Boolean;
+  lHasMedium: Boolean;
   lOldESM: Boolean;
   lOldESL: Boolean;
+  lOldMedium: Boolean;
   lChanged: Boolean;
   lDeniedReason: string;
 begin
@@ -209,7 +216,7 @@ begin
   end;
 
   lFile := xeAutomationRequirePluginFile(xeAutomationRequireStringArg(AArgs, 'file'));
-  xeAutomationReadRequestedHeaderFlags(AArgs, lFlags, lHasESM, lHasESL);
+  xeAutomationReadRequestedHeaderFlags(AArgs, lFlags, lHasESM, lHasESL, lHasMedium);
   // File-header mutations share the central protected-target guard so official,
   // hardcoded, game-master, read-only, and no-edit modes fail the same way as
   // existing record/element mutation commands.
@@ -219,12 +226,16 @@ begin
 
   lOldESM := lFile.IsESM;
   lOldESL := lFile.IsLight;
-  lChanged := (lHasESM and (lOldESM <> lFlags.ESM)) or (lHasESL and (lOldESL <> lFlags.ESL));
+  lOldMedium := lFile.IsMedium;
 
   if lHasESM and (lFile.IsESM <> lFlags.ESM) then
     lFile.IsESM := lFlags.ESM;
   if lHasESL and (lFile.IsLight <> lFlags.ESL) then
     lFile.IsLight := lFlags.ESL;
+  if lHasMedium and (lFile.IsMedium <> lFlags.Medium) then
+    lFile.IsMedium := lFlags.Medium;
+
+  lChanged := (lOldESM <> lFile.IsESM) or (lOldESL <> lFile.IsLight) or (lOldMedium <> lFile.IsMedium);
 
   Result := TJsonObject.Create;
   try
@@ -232,6 +243,7 @@ begin
     Result.O['oldFlags'] := xeAutomationNewHeaderFlags(lFile);
     Result.O['oldFlags'].B['esm'] := lOldESM;
     Result.O['oldFlags'].B['esl'] := lOldESL;
+    Result.O['oldFlags'].B['medium'] := lOldMedium;
     Result.O['newFlags'] := xeAutomationNewHeaderFlags(lFile);
     Result.B['changed'] := lChanged;
     // Hygiene commands deliberately dirty only the daemon's in-memory file state;

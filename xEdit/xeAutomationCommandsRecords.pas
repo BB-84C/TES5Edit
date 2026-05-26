@@ -31,8 +31,6 @@ uses
 
 const
   xeAutomationRecordsListLimit = 100;
-  xeAutomationRecordsCreateSignatureKYWD = 'KYWD';
-  xeAutomationRecordsCreateSignatureMISC = 'MISC';
 
 function xeAutomationCompareFileLoadOrder(AList: TStringList; AIndex1, AIndex2: Integer): Integer;
 var
@@ -215,8 +213,6 @@ end;
 function xeAutomationRequireCreatableRecordSignature(const AArgs: TJsonObject): string;
 begin
   Result := UpperCase(xeAutomationRequireStringArg(AArgs, 'signature'));
-  if (Result <> xeAutomationRecordsCreateSignatureKYWD) and (Result <> xeAutomationRecordsCreateSignatureMISC) then
-    raise xeAutomationInvalidRequest(Format('Automation records.create signature "%s" is not supported', [Result]));
 end;
 
 procedure xeAutomationWriteRecordSummary(const ATarget: TJsonObject; const ARecord: IwbMainRecord);
@@ -509,14 +505,12 @@ begin
   xeAutomationRequireWritableTargetFile(lFile);
 
   try
-    lGroup := lFile.GroupBySignature[StrToSignature(lSignature)];
-    if not Assigned(lGroup) then begin
-      // Top-level groups are a native file-structure seam; create only the approved
-      // allow-listed record groups so automation does not expose arbitrary GRUP edits.
-      lGroupElement := lFile.Add(lSignature, True);
-      if not Supports(lGroupElement, IwbGroupRecord, lGroup) then
-        raise xeAutomationInvalidTarget(Format('Automation record group could not be created for signature %s', [lSignature]));
-    end;
+    // Top-level groups are a native file-structure seam. Automation deliberately
+    // avoids protocol-side signature allow-lists here and lets xEdit's Add path
+    // decide which signatures the active game/file model can actually create.
+    lGroupElement := lFile.Add(lSignature, True);
+    if not Supports(lGroupElement, IwbGroupRecord, lGroup) then
+      raise xeAutomationInvalidTarget(Format('Automation record group could not be created for signature %s', [lSignature]));
 
     lNewElement := lGroup.Add(lSignature, True);
     if not Supports(lNewElement, IwbMainRecord, lRecord) then
