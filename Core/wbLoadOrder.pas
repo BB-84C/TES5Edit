@@ -593,6 +593,19 @@ begin
         Include(miFlags, mfIsESM);
       end;
     end;
+  end
+  else begin
+    // Local fork: surface a plain ".esp" template in Starfield so authors
+    // can keep editing in xEdit instead of round-tripping through
+    // Plugin Bridge. Only the unflagged "plain" .esp is offered here;
+    // the flagged ".esp + light/medium/update" combinations are still
+    // suppressed because they are not produced by the official CK and
+    // their on-load behavior in the SF1 engine is unstable. Plain
+    // ".esp" is binary-identical to ".esm" aside from the master flag
+    // bit at header offset 8 and is what CK uses as its editable
+    // working copy. wbRedPill still opens the full flagged-template set
+    // above for users who knowingly opt into the broader unlock.
+    TwbModuleInfo.AddNewModule('<new file>.esp', True);
   end;
 
   with TwbModuleInfo.AddNewModule('<new file>.esm', True)^ do begin

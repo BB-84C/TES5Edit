@@ -4240,9 +4240,18 @@ end;
 
 function TwbFile.GetIsEditable: Boolean;
 begin
-  if wbIsStarfield and Assigned(flModule) then
-   if (flModule.miExtension = meESP) and not wbRedPill then
-     Exit(False);
+  // Local fork: the Starfield-only "block any .esp" filename gate has been
+  // removed. Plain .esp (no Light/Medium/Update/ESL/Blueprint flag) is
+  // binary-identical to .esm in SF1 (Plugin Bridge proves a one-bit-only
+  // diff at header offset 8); CK itself uses .esp as its editable working
+  // copy with Starfield.esm as a master. Downstream gates still apply:
+  // ESL/Update flag save guards (around lines 5170-5230), the SF1
+  // "Only full modules can add masters" rule (line 2479+), the
+  // fsIsGameMaster / fsIsHardcoded / fsIsOfficial protection just below,
+  // and the wbEditAllowed / read-only safeguards. wbRedPill remains the
+  // escape hatch for flagged-.esp / ESL / Update workflows that this
+  // fork still does NOT default-open because the SF1 engine itself is
+  // unstable on those combinations.
 
   Result :=
     wbIsInternalEdit or

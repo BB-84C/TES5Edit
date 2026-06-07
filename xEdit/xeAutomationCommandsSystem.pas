@@ -159,6 +159,19 @@ begin
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esm');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esl');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('medium');
+  // Local fork: surface that Starfield .esp creation/editing/master-add is
+  // enabled natively in this build, even though upstream xEdit blocks it.
+  // The "plain-only" mode means we only open the unflagged .esp shape
+  // (no Light/Medium/Update/ESL flag); flagged-.esp combinations remain
+  // blocked because the SF1 engine handles them unstably. The
+  // "full-only" master policy means master-add still requires every
+  // master to be a Full module - matching xEdit core's existing SF1
+  // safety gate at TwbFile.AddMaster.
+  if wbIsStarfield then begin
+    Result.O['supports'].O['filesCreate'].O['starfieldEspWrite'].S['mode'] := 'plain-only';
+    Result.O['supports'].O['filesCreate'].O['starfieldEspWrite'].S['masterPolicy'] := 'full-only';
+    Result.O['supports'].O['filesCreate'].O['starfieldEspWrite'].B['allowMasterAdd'] := True;
+  end;
   // records.create intentionally has no protocol-side signature allow-list; xEdit's
   // native group/record Add path owns support decisions for the active game mode.
   Result.O['supports'].O['recordsCreate'].S['signaturePolicy'] := 'native-xedit-add';
