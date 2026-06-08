@@ -5,7 +5,7 @@
         <Config Condition="'$(Config)'==''">LiteDebug</Config>
         <FrameworkType>VCL</FrameworkType>
         <MainSource>xEdit.dpr</MainSource>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
         <ProjectGuid>{BB5B51E2-CC9A-4404-A582-958449C5049E}</ProjectGuid>
         <ProjectName Condition="'$(ProjectName)'==''">xEdit</ProjectName>
         <ProjectVersion>20.3</ProjectVersion>

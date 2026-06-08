@@ -25,6 +25,22 @@ procedure xeAutomationRequireWritableElementTarget(const AElement: IwbElement);
 procedure xeAutomationRequireAddableElementTarget(const AElement: IwbElement);
 procedure xeAutomationRequireCopyTarget(const ATarget, ASource: IwbElement);
 procedure xeAutomationRequireRemovableElementTarget(const AElement: IwbElement);
+
+// NEW Phase 13 element-mutation gates
+procedure xeAutomationRequireSetToDefaultTarget(const AElement: IwbElement);
+procedure xeAutomationRequireClearableElementTarget(const AElement: IwbElement);
+procedure xeAutomationRequireMoveUpElementTarget(const AElement: IwbElement);
+procedure xeAutomationRequireMoveDownElementTarget(const AElement: IwbElement);
+procedure xeAutomationRequireMemberChangeElementTarget(const AElement: IwbElement);
+procedure xeAutomationRequireAddableElementTargetAt(
+  const AElement: IwbElement; const ATargetIndex: Integer);
+procedure xeAutomationRequireCopyTargetAt(
+  const ATarget, ASource: IwbElement; const ATargetIndex: Integer);
+
+// NEW Phase 13 pure boolean discovery helpers (no exceptions, for edit_capabilities)
+function xeAutomationElementCanSetToDefault(const AElement: IwbElement): Boolean;
+function xeAutomationElementCanAssignAt(
+  const ATarget, ASource: IwbElement; const ATargetIndex: Integer): Boolean;
 function xeAutomationResolveSaveTargets(const AArgs: TJsonObject): TxeAutomationTargetFiles;
 function xeAutomationMutationPolicyConsentSatisfied(out ADeniedReason: string): Boolean;
 
@@ -250,6 +266,148 @@ begin
   // required, so the automation path must honor xEdit''s own removability check.
   if not AElement.IsRemovable then
     raise xeAutomationMutationNotAllowed('Automation mutation target cannot remove the addressed child');
+end;
+
+procedure xeAutomationRequireSetToDefaultTarget(const AElement: IwbElement);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  // SetToDefault availability mirrors the GUI rule at xEdit/xeMainForm.pas:16015-16016.
+  // Both must remain in sync; if GUI behavior shifts, update here.
+  if not xeAutomationElementCanSetToDefault(AElement) then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot be reset to default');
+end;
+
+procedure xeAutomationRequireClearableElementTarget(const AElement: IwbElement);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  // Clear admissibility is definition-driven (variable-length, all children removable).
+  if not AElement.IsClearable then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target is not clearable');
+end;
+
+procedure xeAutomationRequireMoveUpElementTarget(const AElement: IwbElement);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  // CanMoveUp encodes "has a previous sibling in a reorderable container."
+  if not AElement.CanMoveUp then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot move up');
+end;
+
+procedure xeAutomationRequireMoveDownElementTarget(const AElement: IwbElement);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  if not AElement.CanMoveDown then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot move down');
+end;
+
+procedure xeAutomationRequireMemberChangeElementTarget(const AElement: IwbElement);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  // Member change replaces the element in its slot; CanChangeMember encodes union shape.
+  if not AElement.CanChangeMember then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot change member');
+end;
+
+procedure xeAutomationRequireAddableElementTargetAt(
+  const AElement: IwbElement; const ATargetIndex: Integer);
+begin
+  if not Assigned(AElement) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  xeAutomationRequireWritableTargetFile(AElement._File);
+
+  // Schema-bound add admissibility, parametrized over placement index. Defers to native
+  // CanAssign so multi-template containers stay consistent with the GUI Add menu.
+  if (esNotSuitableToAddTo in AElement.ElementStates)
+    or not AElement.CanAssign(ATargetIndex, nil, True) then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot accept a child at the requested index');
+end;
+
+procedure xeAutomationRequireCopyTargetAt(
+  const ATarget, ASource: IwbElement; const ATargetIndex: Integer);
+begin
+  if not Assigned(ATarget) then
+    raise xeAutomationInvalidTarget('Automation mutation target is required');
+
+  if not Assigned(ASource) then
+    raise xeAutomationInvalidTarget('Automation mutation source is required');
+
+  xeAutomationRequireWritableTargetFile(ATarget._File);
+
+  // Copy admissibility considers both placement index and concrete source. Defers to
+  // CanAssign with source so the schema decides, not the CLI.
+  if (esNotSuitableToAddTo in ATarget.ElementStates)
+    or not ATarget.CanAssign(ATargetIndex, ASource, True) then
+    raise xeAutomationMutationNotAllowed(
+      'Automation mutation target cannot accept the addressed source child at the requested index');
+end;
+
+function xeAutomationElementCanSetToDefault(const AElement: IwbElement): Boolean;
+var
+  lValueDef: IwbValueDef;
+begin
+  // Mirror of GUI predicate at xEdit/xeMainForm.pas:16015-16016. SetToDefault is meaningful
+  // when the element has a definition-driven default. The GUI gates the menu item by
+  // checking IsEditable plus the presence of a ValueDef or container shape. Replicate that.
+  Result := False;
+  if not Assigned(AElement) then
+    Exit;
+
+  if not AElement.IsEditable then
+    Exit;
+
+  // Allow on value-bearing leaves (have a ValueDef with a default) AND on optional
+  // structural containers. Native SetToDefault is a no-op when no default exists, so
+  // erring on the side of "yes if writable + has shape" is consistent with GUI behavior.
+  lValueDef := AElement.ValueDef;
+  if Assigned(lValueDef) then begin
+    Result := True;
+    Exit;
+  end;
+
+  // Containers: native SetToDefault resets the substructure where defaults are declared.
+  if Supports(AElement, IwbContainer) then
+    Result := True;
+end;
+
+function xeAutomationElementCanAssignAt(
+  const ATarget, ASource: IwbElement; const ATargetIndex: Integer): Boolean;
+begin
+  // Pure boolean variant for elements.edit_capabilities — reports rather than raises.
+  Result := False;
+  if not Assigned(ATarget) then
+    Exit;
+
+  if esNotSuitableToAddTo in ATarget.ElementStates then
+    Exit;
+
+  Result := ATarget.CanAssign(ATargetIndex, ASource, True);
 end;
 
 end.
