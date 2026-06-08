@@ -517,20 +517,155 @@ begin
   end;
 end;
 
-function xeAutomationElementsAddChildBuildAvailableTemplatesDetails(
-  const ATemplates: TwbTemplateElements): TJsonObject;
+procedure xeAutomationElementsWriteTemplateList(
+  const ATarget: TJsonArray; const ATemplates: TwbTemplateElements);
 var
-  lArray: TJsonArray;
   lEntry: TJsonObject;
   i: Integer;
 begin
-  Result := TJsonObject.Create;
-  lArray := Result.A['availableTemplates'];
   for i := Low(ATemplates) to High(ATemplates) do begin
-    lEntry := lArray.AddObject;
+    lEntry := ATarget.AddObject;
     lEntry.I['index'] := i;
-    lEntry.S['name'] := ATemplates[i].Name;
+    lEntry.S['name']  := ATemplates[i].Name;
   end;
+end;
+
+function xeAutomationElementsResolveTargetIndexArg(
+  const AArgs: TJsonObject; out ATargetIndex: Integer): string;
+begin
+  // Optional targetIndex defaults to xEdit's append sentinel. A present-but-wrong
+  // JSON type is a malformed automation request, not an implicit append.
+  if xeAutomationArgPresent(AArgs, 'targetIndex') then begin
+    if AArgs.Types['targetIndex'] <> jdtInt then
+      raise xeAutomationInvalidRequest('Automation arg "targetIndex" must be an integer');
+    ATargetIndex := AArgs.I['targetIndex'];
+    Result := IntToStr(ATargetIndex);
+  end else begin
+    ATargetIndex := wbAssignAdd;
+    Result := 'append';
+  end;
+end;
+
+function xeAutomationElementsEditCapabilities(const AArgs: TJsonObject): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lTargetIndex: Integer;
+  lTargetIndexLabel: string;
+  lSourceLocator: TxeAutomationLocator;
+  lSourceRecord: IwbMainRecord;
+  lSourceElement: IwbElement;
+  lHasSource: Boolean;
+  lCanAssign: Boolean;
+  lTemplates: TwbTemplateElements;
+  lWritableTargetFile: Boolean;
+begin
+  // This is a read-only discovery command: it reports native predicates plus the
+  // narrower automation write policy without requiring mutation consent.
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireElement(lLocator, lRecord);
+
+  lTargetIndexLabel := xeAutomationElementsResolveTargetIndexArg(AArgs, lTargetIndex);
+
+  lHasSource := AArgs.Contains('source') and (AArgs.Types['source'] = jdtObject);
+  lSourceElement := nil;
+  if lHasSource then begin
+    lSourceLocator := xeAutomationParseNestedLocatorArg(AArgs, 'source', True, True);
+    lSourceElement := xeAutomationRequireElement(lSourceLocator, lSourceRecord);
+  end;
+
+  Result := TJsonObject.Create;
+  try
+    Result.O['locator'].S['file']   := lRecord._File.FileName;
+    Result.O['locator'].S['formId'] := lRecord.LoadOrderFormID.ToString(False);
+    Result.O['locator'].S['path']   := xeAutomationElementLocatorPath(lElement);
+    xeAutomationWriteElementSummary(
+      Result.O['object'], lElement, xeAutomationElementLocatorPath(lElement));
+
+    Result.O['predicates'].B['isEditable']      := lElement.IsEditable;
+    Result.O['predicates'].B['isRemovable']     := lElement.IsRemovable;
+    Result.O['predicates'].B['isClearable']     := lElement.IsClearable;
+    Result.O['predicates'].B['canMoveUp']       := lElement.CanMoveUp;
+    Result.O['predicates'].B['canMoveDown']     := lElement.CanMoveDown;
+    Result.O['predicates'].B['canChangeMember'] := lElement.CanChangeMember;
+
+    lWritableTargetFile := False;
+    try
+      xeAutomationRequireWritableTargetFile(lElement._File);
+      lWritableTargetFile := True;
+    except
+      // Capability probes must stay read-only on protected files; policy denials
+      // simply collapse operation booleans to False instead of failing discovery.
+    end;
+
+    lCanAssign := lWritableTargetFile and
+      xeAutomationElementCanAssignAt(lElement, lSourceElement, lTargetIndex);
+
+    Result.O['operations'].B['setValue']       := lWritableTargetFile and lElement.IsEditable and Assigned(lElement.ValueDef);
+    Result.O['operations'].B['setNativeValue'] := lWritableTargetFile and lElement.IsEditable and Assigned(lElement.ValueDef);
+    Result.O['operations'].B['setToDefault']   := lWritableTargetFile and xeAutomationElementCanSetToDefault(lElement);
+    Result.O['operations'].B['clear']          := lWritableTargetFile and lElement.IsClearable;
+    Result.O['operations'].B['moveUp']         := lWritableTargetFile and lElement.CanMoveUp;
+    Result.O['operations'].B['moveDown']       := lWritableTargetFile and lElement.CanMoveDown;
+    Result.O['operations'].B['nextMember']     := lWritableTargetFile and lElement.CanChangeMember;
+    Result.O['operations'].B['previousMember'] := lWritableTargetFile and lElement.CanChangeMember;
+    Result.O['operations'].B['addChild']       := lWritableTargetFile and
+      (not (esNotSuitableToAddTo in lElement.ElementStates)) and
+      lElement.CanAssign(lTargetIndex, nil, True);
+    Result.O['operations'].B['copyChildTo']    := lWritableTargetFile and
+      (not (esNotSuitableToAddTo in lElement.ElementStates)) and
+      lElement.CanAssign(lTargetIndex, lSourceElement, True);
+
+    Result.O['assign'].S['targetIndex']               := lTargetIndexLabel;
+    Result.O['assign'].B['sourceProvided']            := lHasSource;
+    Result.O['assign'].B['canAssign']                 := lCanAssign;
+    lTemplates := lElement.GetAssignTemplates(lTargetIndex);
+    Result.O['assign'].I['templateCount']             := Length(lTemplates);
+    Result.O['assign'].B['requiresTemplateSelection'] := Length(lTemplates) > 1;
+    xeAutomationElementsWriteTemplateList(Result.O['assign'].A['templates'], lTemplates);
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+function xeAutomationElementsAssignTemplates(const AArgs: TJsonObject): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lTargetIndex: Integer;
+  lTargetIndexLabel: string;
+  lTemplates: TwbTemplateElements;
+begin
+  // Native template discovery is read-only and intentionally separate from
+  // source-sensitive CanAssign, which belongs to elements.edit_capabilities.
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireElement(lLocator, lRecord);
+
+  lTargetIndexLabel := xeAutomationElementsResolveTargetIndexArg(AArgs, lTargetIndex);
+  lTemplates := lElement.GetAssignTemplates(lTargetIndex);
+
+  Result := TJsonObject.Create;
+  try
+    Result.O['locator'].S['file']   := lRecord._File.FileName;
+    Result.O['locator'].S['formId'] := lRecord.LoadOrderFormID.ToString(False);
+    Result.O['locator'].S['path']   := xeAutomationElementLocatorPath(lElement);
+    Result.S['targetIndex'] := lTargetIndexLabel;
+    Result.I['count']       := Length(lTemplates);
+    xeAutomationElementsWriteTemplateList(Result.A['templates'], lTemplates);
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+function xeAutomationElementsAddChildBuildAvailableTemplatesDetails(
+  const ATemplates: TwbTemplateElements): TJsonObject;
+begin
+  Result := TJsonObject.Create;
+  xeAutomationElementsWriteTemplateList(Result.A['availableTemplates'], ATemplates);
 end;
 
 function xeAutomationElementsAddChildSelectTemplate(
@@ -983,6 +1118,8 @@ begin
   xeAutomationRegisterCommand('elements.children', xeAutomationElementsChildren);
   xeAutomationRegisterCommand('elements.conflict_status', xeAutomationElementsConflictStatus);
   xeAutomationRegisterCommand('elements.required_masters', xeAutomationElementsRequiredMasters);
+  xeAutomationRegisterCommand('elements.edit_capabilities', xeAutomationElementsEditCapabilities);
+  xeAutomationRegisterCommand('elements.assign_templates', xeAutomationElementsAssignTemplates);
   xeAutomationRegisterCommand('elements.set_value', xeAutomationElementsSetValue);
   xeAutomationRegisterCommand('elements.set_to_default', xeAutomationElementsSetToDefault);
   xeAutomationRegisterCommand('elements.clear', xeAutomationElementsClear);
