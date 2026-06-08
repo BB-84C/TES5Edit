@@ -68,7 +68,7 @@ Optional args:
 
 - `targetIndex` (default `wbAssignAdd`)
 - `templateIndex` / `templateName` — must agree if both provided
-- Ambiguous multi-template targets without selector return `mutation_not_allowed` with `details.availableTemplates`.
+- Ambiguous multi-template targets without selector return `mutation_not_allowed` with `details.availableTemplates`. (Note: this refusal-with-details branch is implemented but unverified end-to-end against FO4 fixtures in 0.11 — no probed vanilla FO4 container exposed `assign_templates count >= 2`. Clients should prefer the two-call `assign_templates` + `add_child{templateName}` pattern.)
 
 ### `elements.copy_child_to` (extended)
 
