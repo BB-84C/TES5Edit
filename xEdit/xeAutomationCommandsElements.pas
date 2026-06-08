@@ -289,7 +289,7 @@ begin
       if lValueType <> jdtArray then
         raise xeAutomationInvalidRequest('Automation arg "value" with kind:"formIdArray" must be a JSON array of hex strings');
       lArray := AArgs.A['value'];
-      lVarArray := VarArrayCreate([0, Pred(lArray.Count)], varInteger);
+      lVarArray := VarArrayCreate([0, Pred(lArray.Count)], varLongWord);
       for i := 0 to Pred(lArray.Count) do begin
         if lArray.Types[i] <> jdtString then
           raise xeAutomationInvalidRequest('Automation arg "value[i]" with kind:"formIdArray" must be a hex string');
@@ -332,17 +332,17 @@ begin
     try
       case VarType(AElement.NativeValue) and varTypeMask of
         varEmpty, varNull:
-          Result.O['native'].B['null'] := True;
+          Result.O['nativeValue'].B['null'] := True;
         varInteger, varSmallint, varShortInt, varByte, varWord:
-          Result.O['native'].I['intValue'] := AElement.NativeValue;
+          Result.O['nativeValue'].I['intValue'] := AElement.NativeValue;
         varLongWord, varInt64, varUInt64:
-          Result.O['native'].L['longValue'] := AElement.NativeValue;
+          Result.O['nativeValue'].L['longValue'] := AElement.NativeValue;
         varSingle, varDouble:
-          Result.O['native'].F['floatValue'] := AElement.NativeValue;
+          Result.O['nativeValue'].F['floatValue'] := AElement.NativeValue;
         varBoolean:
-          Result.O['native'].B['boolValue'] := AElement.NativeValue;
+          Result.O['nativeValue'].B['boolValue'] := AElement.NativeValue;
         varOleStr, varString, varUString:
-          Result.O['native'].S['stringValue'] := AElement.NativeValue;
+          Result.O['nativeValue'].S['stringValue'] := AElement.NativeValue;
       end;
     except
       // Swallow best-effort native echo failures; editValue is canonical proof.
