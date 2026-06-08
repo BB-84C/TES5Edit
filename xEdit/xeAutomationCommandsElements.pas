@@ -118,6 +118,23 @@ begin
     xeAutomationAddChildrenRelation(Result);
 end;
 
+function xeAutomationElementsBuildBeforeAfterSnapshot(
+  const ARecord: IwbMainRecord; const AElement: IwbElement): TJsonObject;
+begin
+  Result := TJsonObject.Create;
+  try
+    Result.O['locator'].S['file']   := ARecord._File.FileName;
+    Result.O['locator'].S['formId'] := ARecord.LoadOrderFormID.ToString(False);
+    Result.O['locator'].S['path']   := xeAutomationElementLocatorPath(AElement);
+    Result.S['editValue'] := AElement.EditValue;
+    xeAutomationWriteElementSummary(
+      Result.O['object'], AElement, xeAutomationElementLocatorPath(AElement));
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
 function xeAutomationNewElementConflictStatusResponse(const ARecord: IwbMainRecord;
   const AElement: IwbElement; const ASnapshot: TxeAutomationConflictSnapshot): TJsonObject;
 var
@@ -235,6 +252,89 @@ begin
     xeAutomationElementLocatorPath(lElement)
   );
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+end;
+
+function xeAutomationElementsSetToDefault(const AArgs: TJsonObject): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lBefore: TJsonObject;
+  lDeniedReason: string;
+begin
+  if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
+    Result := xeAutomationErrorsBuildConsentRequired(
+      'elements.set_to_default', 'elements-mutation', lDeniedReason);
+    Exit;
+  end;
+
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
+  xeAutomationRequireSetToDefaultTarget(lElement);
+
+  lBefore := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lElement);
+  try
+    // SetToDefault is intentionally in-memory only; callers persist later with session.save.
+    lElement.SetToDefault;
+
+    Result := xeAutomationNewMutationResult(
+      lBefore.S['editValue'] <> lElement.EditValue,
+      lRecord._File.Modified,
+      lRecord._File.FileName,
+      lRecord.LoadOrderFormID.ToString(False),
+      xeAutomationElementLocatorPath(lElement)
+    );
+    Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+    Result.O['before'].Assign(lBefore);
+    Result.O['after'] := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lElement);
+  finally
+    lBefore.Free;
+  end;
+end;
+
+function xeAutomationElementsClear(const AArgs: TJsonObject): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lContainer: IwbContainer;
+  lBefore: TJsonObject;
+  lBeforeCount: Integer;
+  lDeniedReason: string;
+begin
+  if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
+    Result := xeAutomationErrorsBuildConsentRequired(
+      'elements.clear', 'elements-mutation', lDeniedReason);
+    Exit;
+  end;
+
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
+  xeAutomationRequireClearableElementTarget(lElement);
+
+  lBeforeCount := 0;
+  if Supports(lElement, IwbContainer, lContainer) then
+    lBeforeCount := lContainer.ElementCount;
+
+  lBefore := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lElement);
+  try
+    // Clear follows xEdit's native IsClearable policy and leaves persistence explicit.
+    lElement.Clear;
+
+    Result := xeAutomationNewMutationResult(
+      lBeforeCount > 0,
+      lRecord._File.Modified,
+      lRecord._File.FileName,
+      lRecord.LoadOrderFormID.ToString(False),
+      xeAutomationElementLocatorPath(lElement)
+    );
+    Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+    Result.O['before'].Assign(lBefore);
+    Result.O['after'] := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lElement);
+    Result.I['removedCount'] := lBeforeCount;
+  finally
+    lBefore.Free;
+  end;
 end;
 
 function xeAutomationElementsSetNativeValueParseValue(
@@ -802,6 +902,8 @@ begin
   xeAutomationRegisterCommand('elements.conflict_status', xeAutomationElementsConflictStatus);
   xeAutomationRegisterCommand('elements.required_masters', xeAutomationElementsRequiredMasters);
   xeAutomationRegisterCommand('elements.set_value', xeAutomationElementsSetValue);
+  xeAutomationRegisterCommand('elements.set_to_default', xeAutomationElementsSetToDefault);
+  xeAutomationRegisterCommand('elements.clear', xeAutomationElementsClear);
   xeAutomationRegisterCommand('elements.set_native_value', xeAutomationElementsSetNativeValue);
   xeAutomationRegisterCommand('elements.add_child', xeAutomationElementsAddChild);
   xeAutomationRegisterCommand('elements.remove_child', xeAutomationElementsRemoveChild);
