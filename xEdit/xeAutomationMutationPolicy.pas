@@ -26,7 +26,6 @@ procedure xeAutomationRequireAddableElementTarget(const AElement: IwbElement);
 procedure xeAutomationRequireCopyTarget(const ATarget, ASource: IwbElement);
 procedure xeAutomationRequireRemovableElementTarget(const AElement: IwbElement);
 
-// NEW Phase 13 element-mutation gates
 procedure xeAutomationRequireSetToDefaultTarget(const AElement: IwbElement);
 procedure xeAutomationRequireClearableElementTarget(const AElement: IwbElement);
 procedure xeAutomationRequireMoveUpElementTarget(const AElement: IwbElement);
@@ -37,7 +36,6 @@ procedure xeAutomationRequireAddableElementTargetAt(
 procedure xeAutomationRequireCopyTargetAt(
   const ATarget, ASource: IwbElement; const ATargetIndex: Integer);
 
-// NEW Phase 13 pure boolean discovery helpers (no exceptions, for edit_capabilities)
 function xeAutomationElementCanSetToDefault(const AElement: IwbElement): Boolean;
 function xeAutomationElementCanAssignAt(
   const ATarget, ASource: IwbElement; const ATargetIndex: Integer): Boolean;
@@ -370,30 +368,26 @@ end;
 
 function xeAutomationElementCanSetToDefault(const AElement: IwbElement): Boolean;
 var
-  lValueDef: IwbValueDef;
+  lStructDef: IwbStructDef;
 begin
-  // Mirror of GUI predicate at xEdit/xeMainForm.pas:16015-16016. SetToDefault is meaningful
-  // when the element has a definition-driven default. The GUI gates the menu item by
-  // checking IsEditable plus the presence of a ValueDef or container shape. Replicate that.
+  // Mirror of GUI predicate at xEdit/xeMainForm.pas:16015-16016 verbatim:
+  //   Supports(Element.ValueDef, IwbStructDef, StructDef)
+  //     and (StructDef.OptionalFromElement <> -1)
+  // SetToDefault is only meaningful on optional struct members. A broad "any
+  // ValueDef OR any container" reading is wrong: container SetToDefault recurses
+  // into children (Core/wbImplementation.pas:8567-8578) and an empty path
+  // resolves to the record root (xeAutomationDataLookup.pas:793-810), so the
+  // approval surface must stay narrow.
   Result := False;
   if not Assigned(AElement) then
     Exit;
-
   if not AElement.IsEditable then
     Exit;
-
-  // Allow on value-bearing leaves (have a ValueDef with a default) AND on optional
-  // structural containers. Native SetToDefault is a no-op when no default exists, so
-  // erring on the side of "yes if writable + has shape" is consistent with GUI behavior.
-  lValueDef := AElement.ValueDef;
-  if Assigned(lValueDef) then begin
-    Result := True;
+  if not Assigned(AElement.ValueDef) then
     Exit;
-  end;
-
-  // Containers: native SetToDefault resets the substructure where defaults are declared.
-  if Supports(AElement, IwbContainer) then
-    Result := True;
+  if not Supports(AElement.ValueDef, IwbStructDef, lStructDef) then
+    Exit;
+  Result := lStructDef.OptionalFromElement <> -1;
 end;
 
 function xeAutomationElementCanAssignAt(
