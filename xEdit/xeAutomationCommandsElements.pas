@@ -474,24 +474,30 @@ procedure xeAutomationCopyChildApplySortOrderFixup(
   const APlacement: TJsonObject);
 var
   lContainer: IwbContainerElementRef;
+  lSortableContainer: IwbSortableContainer;
 begin
-  // Per design §15.2: only fix up sort order when targetIndex is a concrete
-  // non-wbAssignAdd integer and the copied child lives in a container reference
-  // that xEdit can reorder by SortOrder. Otherwise native Assign's placement is
-  // the only mutation and the response reports no explicit sort-order pass.
+  // Mirror GUI predicate at xEdit/xeMainForm.pas:15339-15348:
+  //   * targetIndex within the writable range [0, High(Integer)) — wbAssignAdd is High(Integer)
+  //   * Supports(targetElement, IwbContainerElementRef, ...)
+  //   * View-state vnfIsAligned, which we approximate by "container is NOT content-sorted"
+  //     because vnfIsAligned cannot be read outside the GUI tree.
+  // Conservative on miss: report sortOrderApplied:false rather than silently fire on
+  // a container where SortBySortOrder is a no-op or misleading.
   APlacement.B['sortOrderApplied'] := False;
-  if ATargetIndex = wbAssignAdd then
-    Exit;
   if not Assigned(ANewElement) then
+    Exit;
+  if (ATargetIndex < 0) or (ATargetIndex >= High(Integer)) then
     Exit;
   if not Supports(ANewElement.Container, IwbContainerElementRef, lContainer) then
     Exit;
 
-  // Mirror xEdit/xeMainForm.pas drag/drop sort fix: set SortOrder on the new
-  // element to the requested position, then ask the container to re-sort and
-  // refresh memory order. IwbContainerBase exposes SortBySortOrder as the native
-  // operation rather than a separate boolean predicate, so support for the
-  // container-ref seam is the precise automation gate available here.
+  // IwbContainerElementRef does not expose Sorted directly; IwbSortableContainer
+  // is the reachable interface that reports content-sorted containers.
+  if not Supports(lContainer, IwbSortableContainer, lSortableContainer) then
+    Exit;
+  if lSortableContainer.Sorted then
+    Exit;
+
   ANewElement.SortOrder := ATargetIndex;
   lContainer.SortBySortOrder;
   lContainer.ResetMemoryOrder;
