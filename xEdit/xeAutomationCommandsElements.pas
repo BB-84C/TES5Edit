@@ -236,6 +236,84 @@ begin
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
 end;
 
+function xeAutomationElementsAddChildBuildAvailableTemplatesDetails(
+  const ATemplates: TwbTemplateElements): TJsonObject;
+var
+  lArray: TJsonArray;
+  lEntry: TJsonObject;
+  i: Integer;
+begin
+  Result := TJsonObject.Create;
+  lArray := Result.A['availableTemplates'];
+  for i := Low(ATemplates) to High(ATemplates) do begin
+    lEntry := lArray.AddObject;
+    lEntry.I['index'] := i;
+    lEntry.S['name'] := ATemplates[i].Name;
+  end;
+end;
+
+function xeAutomationElementsAddChildSelectTemplate(
+  const ATemplates: TwbTemplateElements; const AArgs: TJsonObject;
+  out ASelectedIndex: Integer): IwbTemplateElement;
+var
+  lHasIndex, lHasName: Boolean;
+  lIndex: Integer;
+  lName: string;
+  lMatch: Integer;
+  lFoundCount: Integer;
+  i: Integer;
+begin
+  Result := nil;
+  ASelectedIndex := -1;
+
+  lHasIndex := AArgs.Contains('templateIndex') and (AArgs.Types['templateIndex'] <> jdtObject);
+  lHasName  := AArgs.Contains('templateName')  and (AArgs.Types['templateName']  = jdtString);
+
+  if not lHasIndex and not lHasName then begin
+    if Length(ATemplates) > 1 then
+      raise xeAutomationMutationNotAllowedWithDetails(
+        'Automation mutation target requires explicit template selection',
+        xeAutomationElementsAddChildBuildAvailableTemplatesDetails(ATemplates));
+    if Length(ATemplates) = 1 then begin
+      Result := ATemplates[0];
+      ASelectedIndex := 0;
+    end;
+    Exit;
+  end;
+
+  if lHasIndex then begin
+    if AArgs.Types['templateIndex'] <> jdtInt then
+      raise xeAutomationInvalidRequest('Automation arg "templateIndex" must be an integer');
+    lIndex := AArgs.I['templateIndex'];
+    if (lIndex < 0) or (lIndex > High(ATemplates)) then
+      raise xeAutomationInvalidRequest('Automation arg "templateIndex" out of range');
+  end;
+
+  if lHasName then begin
+    lName := Trim(AArgs.S['templateName']);
+    if lName = '' then
+      raise xeAutomationInvalidRequest('Automation arg "templateName" must be a non-empty string');
+    lMatch := -1;
+    lFoundCount := 0;
+    for i := Low(ATemplates) to High(ATemplates) do
+      if SameText(ATemplates[i].Name, lName) then begin
+        lMatch := i;
+        Inc(lFoundCount);
+      end;
+    if lFoundCount = 0 then
+      raise xeAutomationInvalidRequest('Automation arg "templateName" matches no available template');
+    if lFoundCount > 1 then
+      raise xeAutomationInvalidRequest('Automation arg "templateName" is ambiguous; use "templateIndex"');
+    if lHasIndex and (lMatch <> lIndex) then
+      raise xeAutomationInvalidRequest('Automation args "templateIndex" and "templateName" disagree');
+    ASelectedIndex := lMatch;
+  end else begin
+    ASelectedIndex := lIndex;
+  end;
+
+  Result := ATemplates[ASelectedIndex];
+end;
+
 function xeAutomationElementsAddChild(const AArgs: TJsonObject): TJsonObject;
 var
   lLocator: TxeAutomationLocator;
@@ -244,8 +322,10 @@ var
   lNewElement: IwbElement;
   lTargetIndex: Integer;
   lTemplate: IwbTemplateElement;
+  lSelectedTemplateIndex: Integer;
   lTemplates: TwbTemplateElements;
   lDeniedReason: string;
+  lPlacement: TJsonObject;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
     Result := xeAutomationErrorsBuildConsentRequired('elements.add_child', 'elements-mutation', lDeniedReason);
@@ -254,17 +334,19 @@ begin
 
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
-  xeAutomationRequireAddableElementTarget(lElement);
 
-  // Structural adds stop at the loaded daemon session for now. Persistence stays
-  // behind a later explicit save command so add/remove cannot silently touch disk.
-  lTargetIndex := wbAssignAdd;
-  lTemplate := nil;
+  if AArgs.Contains('targetIndex') and (AArgs.Types['targetIndex'] <> jdtObject) then begin
+    if AArgs.Types['targetIndex'] <> jdtInt then
+      raise xeAutomationInvalidRequest('Automation arg "targetIndex" must be an integer');
+    lTargetIndex := AArgs.I['targetIndex'];
+  end else begin
+    lTargetIndex := wbAssignAdd;
+  end;
+
+  xeAutomationRequireAddableElementTargetAt(lElement, lTargetIndex);
+
   lTemplates := lElement.GetAssignTemplates(lTargetIndex);
-  if Length(lTemplates) > 1 then
-    raise xeAutomationMutationNotAllowed('Automation mutation target requires explicit template selection');
-  if Length(lTemplates) = 1 then
-    lTemplate := lTemplates[0];
+  lTemplate := xeAutomationElementsAddChildSelectTemplate(lTemplates, AArgs, lSelectedTemplateIndex);
 
   lNewElement := lElement.Assign(lTargetIndex, lTemplate, False);
   if not Assigned(lNewElement) then
@@ -279,6 +361,23 @@ begin
     xeAutomationElementLocatorPath(lNewElement)
   );
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+
+  Result.O['target'].O['locator'].S['file']   := lRecord._File.FileName;
+  Result.O['target'].O['locator'].S['formId'] := lRecord.LoadOrderFormID.ToString(False);
+  Result.O['target'].O['locator'].S['path']   := lLocator.Path;
+
+  lPlacement := Result.O['placement'];
+  if lTargetIndex = wbAssignAdd then
+    lPlacement.S['mode'] := 'append'
+  else begin
+    lPlacement.S['mode']  := 'index';
+    lPlacement.I['value'] := lTargetIndex;
+  end;
+
+  if Assigned(lTemplate) then begin
+    Result.O['selectedTemplate'].I['index'] := lSelectedTemplateIndex;
+    Result.O['selectedTemplate'].S['name']  := lTemplate.Name;
+  end;
 end;
 
 function xeAutomationElementsRemoveChild(const AArgs: TJsonObject): TJsonObject;

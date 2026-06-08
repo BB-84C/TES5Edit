@@ -92,6 +92,7 @@ function xeAutomationInvalidRequest(const aMessage: string): ExeAutomationError;
 function xeAutomationUnknownCommand(const aCommand: string): ExeAutomationError;
 function xeAutomationInvalidTarget(const aMessage: string): ExeAutomationError;
 function xeAutomationMutationNotAllowed(const aMessage: string): ExeAutomationError;
+function xeAutomationMutationNotAllowedWithDetails(const aMessage: string; const aDetails: TJsonObject): ExeAutomationError;
 function xeAutomationReadOnlyTarget(const aMessage: string): ExeAutomationError;
 function xeAutomationStateConflict(const aMessage: string): ExeAutomationError;
 function xeAutomationSaveFailed(const aMessage: string): ExeAutomationError;
@@ -154,6 +155,11 @@ end;
 function xeAutomationMutationNotAllowed(const aMessage: string): ExeAutomationError;
 begin
   Result := xeAutomationNewError(xeAutomationErrorMutationNotAllowed, aMessage);
+end;
+
+function xeAutomationMutationNotAllowedWithDetails(const aMessage: string; const aDetails: TJsonObject): ExeAutomationError;
+begin
+  Result := xeAutomationNewError(xeAutomationErrorMutationNotAllowed, aMessage, aDetails);
 end;
 
 function xeAutomationReadOnlyTarget(const aMessage: string): ExeAutomationError;
