@@ -138,7 +138,7 @@ var
   lScripts: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  Result.S['contractVersion'] := '0.10';
+  Result.S['contractVersion'] := '0.11';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -244,6 +244,56 @@ begin
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('esl');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('medium');
   Result.O['supports'].O['fileHygiene'].S['saveBoundary'] := 'explicit_session_save';
+
+  // Phase 13 element-mutation expansion. See docs/plans/2026-06-07-xedit-phase13-*.md.
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.set_native_value');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.set_to_default');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.clear');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.move_up');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.move_down');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.next_member');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.previous_member');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.edit_capabilities');
+  Result.O['supports'].O['elementsMutation'].A['commands'].Add('elements.assign_templates');
+
+  Result.O['supports'].O['elementsMutation'].O['discovery'].S['capabilitiesCommand'] := 'elements.edit_capabilities';
+  Result.O['supports'].O['elementsMutation'].O['discovery'].S['templatesCommand']    := 'elements.assign_templates';
+  Result.O['supports'].O['elementsMutation'].O['discovery'].B['templatesEmbedded']   := True;
+  Result.O['supports'].O['elementsMutation'].O['discovery'].B['sourceSensitiveCopyCheck'] := True;
+
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].B['editValue'] := True;
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].B['supported']    := True;
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].S['requestShape'] := 'json-typed-with-optional-kind-hint';
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('int');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('float');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('string');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('bool');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('formId');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].A['kinds'].Add('formIdArray');
+  Result.O['supports'].O['elementsMutation'].O['valueWrites'].O['nativeValue'].B['losslessJsonRoundTrip'] := False;
+
+  Result.O['supports'].O['elementsMutation'].O['addChild'].B['targetIndex'] := True;
+  Result.O['supports'].O['elementsMutation'].O['addChild'].O['templateSelection'].B['byIndex'] := True;
+  Result.O['supports'].O['elementsMutation'].O['addChild'].O['templateSelection'].B['byName']  := True;
+  Result.O['supports'].O['elementsMutation'].O['addChild'].O['templateSelection'].B['autoSelectSingleTemplate'] := True;
+
+  Result.O['supports'].O['elementsMutation'].O['copyChildTo'].B['targetIndex'] := True;
+  Result.O['supports'].O['elementsMutation'].O['copyChildTo'].O['addRequiredMasters'].B['supported'] := True;
+  Result.O['supports'].O['elementsMutation'].O['copyChildTo'].O['addRequiredMasters'].B['default']   := False;
+  Result.O['supports'].O['elementsMutation'].O['copyChildTo'].B['sortOrderExposed'] := False;
+  Result.O['supports'].O['elementsMutation'].O['copyChildTo'].S['placementMode']    := 'targetIndex';
+
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['setToDefault']     := True;
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['clear']            := True;
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['moveUp']           := True;
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['moveDown']         := True;
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['nextMember']       := True;
+  Result.O['supports'].O['elementsMutation'].O['operations'].B['previousMember']   := True;
+
+  Result.O['supports'].O['elementsMutation'].S['saveBoundary']    := 'explicit_session_save';
+  Result.O['supports'].O['elementsMutation'].S['mutationPolicy']  := 'native-xedit-predicates';
+  Result.O['supports'].O['elementsMutation'].B['consentRequired'] := True;
+  Result.O['supports'].O['elementsMutation'].B['iKnowWhatImDoing'] := wbIKnowWhatImDoing;
 end;
 
 initialization
