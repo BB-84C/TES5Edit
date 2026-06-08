@@ -35,6 +35,13 @@ begin
     - IwbFile(Pointer(AList.Objects[AIndex2])).LoadOrder;
 end;
 
+function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
+begin
+  // Treat explicit JSON null and absent keys both as "not present"; any other
+  // JSON type is present so the per-arg validators can reject malformed input.
+  Result := Assigned(AArgs) and AArgs.Contains(AKey) and not AArgs.IsNull(AKey);
+end;
+
 function xeAutomationCollectRequiredMasters(const AElement: IwbElement; const ATargetFile: IwbFile): TStringList;
 var
   lMasters: TwbFilesSet;
@@ -261,19 +268,28 @@ var
   lName: string;
   lMatch: Integer;
   lFoundCount: Integer;
+  lDetails: TJsonObject;
   i: Integer;
 begin
   Result := nil;
   ASelectedIndex := -1;
 
-  lHasIndex := AArgs.Contains('templateIndex') and (AArgs.Types['templateIndex'] <> jdtObject);
-  lHasName  := AArgs.Contains('templateName')  and (AArgs.Types['templateName']  = jdtString);
+  lHasIndex := xeAutomationArgPresent(AArgs, 'templateIndex');
+  lHasName  := xeAutomationArgPresent(AArgs, 'templateName');
+  if lHasName and (AArgs.Types['templateName'] <> jdtString) then
+    raise xeAutomationInvalidRequest('Automation arg "templateName" must be a string');
 
   if not lHasIndex and not lHasName then begin
-    if Length(ATemplates) > 1 then
-      raise xeAutomationMutationNotAllowedWithDetails(
-        'Automation mutation target requires explicit template selection',
-        xeAutomationElementsAddChildBuildAvailableTemplatesDetails(ATemplates));
+    if Length(ATemplates) > 1 then begin
+      lDetails := xeAutomationElementsAddChildBuildAvailableTemplatesDetails(ATemplates);
+      try
+        // The error factory copies details, so this caller retains/free owns the builder result.
+        raise xeAutomationMutationNotAllowedWithDetails(
+          'Automation mutation target requires explicit template selection', lDetails);
+      finally
+        lDetails.Free;
+      end;
+    end;
     if Length(ATemplates) = 1 then begin
       Result := ATemplates[0];
       ASelectedIndex := 0;
@@ -335,7 +351,7 @@ begin
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
 
-  if AArgs.Contains('targetIndex') and (AArgs.Types['targetIndex'] <> jdtObject) then begin
+  if xeAutomationArgPresent(AArgs, 'targetIndex') then begin
     if AArgs.Types['targetIndex'] <> jdtInt then
       raise xeAutomationInvalidRequest('Automation arg "targetIndex" must be an integer');
     lTargetIndex := AArgs.I['targetIndex'];
