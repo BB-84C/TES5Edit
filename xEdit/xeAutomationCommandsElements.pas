@@ -895,6 +895,88 @@ begin
   end;
 end;
 
+type
+  TxeAutomationElementMoveOrMemberOp = (emoMoveUp, emoMoveDown, emoNextMember, emoPrevMember);
+
+function xeAutomationElementsMoveOrMemberCore(
+  const AArgs: TJsonObject; const AOp: TxeAutomationElementMoveOrMemberOp;
+  const ACommandName: string): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement, lAfterElement: IwbElement;
+  lBefore: TJsonObject;
+  lBeforePath, lAfterPath: string;
+  lDeniedReason: string;
+begin
+  if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
+    Result := xeAutomationErrorsBuildConsentRequired(
+      ACommandName, 'elements-mutation', lDeniedReason);
+    Exit;
+  end;
+
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
+
+  case AOp of
+    emoMoveUp:     xeAutomationRequireMoveUpElementTarget(lElement);
+    emoMoveDown:   xeAutomationRequireMoveDownElementTarget(lElement);
+    emoNextMember,
+    emoPrevMember: xeAutomationRequireMemberChangeElementTarget(lElement);
+  end;
+
+  lBefore := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lElement);
+  lBeforePath := xeAutomationElementLocatorPath(lElement);
+  try
+    case AOp of
+      emoMoveUp:     begin lElement.MoveUp;     lAfterElement := lElement; end;
+      emoMoveDown:   begin lElement.MoveDown;   lAfterElement := lElement; end;
+      emoNextMember:     lAfterElement := lElement.NextMember;
+      emoPrevMember:     lAfterElement := lElement.PreviousMember;
+    end;
+    if not Assigned(lAfterElement) then
+      lAfterElement := lElement;
+
+    lAfterPath := xeAutomationElementLocatorPath(lAfterElement);
+
+    Result := xeAutomationNewMutationResult(
+      lBeforePath <> lAfterPath,
+      lRecord._File.Modified,
+      lRecord._File.FileName,
+      lRecord.LoadOrderFormID.ToString(False),
+      lAfterPath
+    );
+    Result.O['file']        := xeAutomationNewFileSummary(lRecord._File);
+    // The original path can drift after native move/member operations, so the
+    // post-mutation top-level locator is the caller's authoritative continuation point.
+    Result.B['pathChanged'] := lBeforePath <> lAfterPath;
+    Result.O['before'].Assign(lBefore);
+    Result.O['after']       := xeAutomationElementsBuildBeforeAfterSnapshot(lRecord, lAfterElement);
+  finally
+    lBefore.Free;
+  end;
+end;
+
+function xeAutomationElementsMoveUp(const AArgs: TJsonObject): TJsonObject;
+begin
+  Result := xeAutomationElementsMoveOrMemberCore(AArgs, emoMoveUp, 'elements.move_up');
+end;
+
+function xeAutomationElementsMoveDown(const AArgs: TJsonObject): TJsonObject;
+begin
+  Result := xeAutomationElementsMoveOrMemberCore(AArgs, emoMoveDown, 'elements.move_down');
+end;
+
+function xeAutomationElementsNextMember(const AArgs: TJsonObject): TJsonObject;
+begin
+  Result := xeAutomationElementsMoveOrMemberCore(AArgs, emoNextMember, 'elements.next_member');
+end;
+
+function xeAutomationElementsPreviousMember(const AArgs: TJsonObject): TJsonObject;
+begin
+  Result := xeAutomationElementsMoveOrMemberCore(AArgs, emoPrevMember, 'elements.previous_member');
+end;
+
 procedure xeAutomationRegisterElementsCommands;
 begin
   xeAutomationRegisterCommand('elements.get', xeAutomationElementsGet);
@@ -908,6 +990,10 @@ begin
   xeAutomationRegisterCommand('elements.add_child', xeAutomationElementsAddChild);
   xeAutomationRegisterCommand('elements.remove_child', xeAutomationElementsRemoveChild);
   xeAutomationRegisterCommand('elements.copy_child_to', xeAutomationElementsCopyChildTo);
+  xeAutomationRegisterCommand('elements.move_up', xeAutomationElementsMoveUp);
+  xeAutomationRegisterCommand('elements.move_down', xeAutomationElementsMoveDown);
+  xeAutomationRegisterCommand('elements.next_member', xeAutomationElementsNextMember);
+  xeAutomationRegisterCommand('elements.previous_member', xeAutomationElementsPreviousMember);
 end;
 
 end.
