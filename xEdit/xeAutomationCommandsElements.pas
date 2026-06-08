@@ -17,6 +17,7 @@ implementation
 uses
   SysUtils,
   Classes,
+  Variants,
   JsonDataObjects,
   wbInterface,
   xeAutomationConflictSnapshot,
@@ -234,6 +235,184 @@ begin
     xeAutomationElementLocatorPath(lElement)
   );
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+end;
+
+function xeAutomationElementsSetNativeValueParseValue(
+  const AArgs: TJsonObject; const AKind: string): Variant;
+var
+  lValueType: TJsonDataType;
+  lRawString: string;
+  lInt64Value: Int64;
+  lParsedFormId: Cardinal;
+  lArray: TJsonArray;
+  lVarArray: Variant;
+  i: Integer;
+begin
+  lValueType := AArgs.Types['value'];
+
+  // Explicit kind assertions intentionally validate the JSON shape before xEdit
+  // sees the Variant, so malformed requests fail with stable protocol errors.
+  if AKind <> '' then begin
+    if SameText(AKind, 'int') then begin
+      if lValueType = jdtString then begin
+        if not TryStrToInt64(AArgs.S['value'], lInt64Value) then
+          raise xeAutomationInvalidRequest('Automation arg "value" with kind:"int" must be a parsable integer string');
+        Exit(lInt64Value);
+      end;
+      if lValueType in [jdtInt, jdtLong] then
+        Exit(AArgs.L['value']);
+      raise xeAutomationInvalidRequest('Automation arg "value" with kind:"int" must be a number or decimal string');
+    end;
+    if SameText(AKind, 'float') then begin
+      if lValueType in [jdtFloat, jdtInt, jdtLong] then
+        Exit(Double(AArgs.F['value']));
+      raise xeAutomationInvalidRequest('Automation arg "value" with kind:"float" must be a number');
+    end;
+    if SameText(AKind, 'string') then begin
+      if lValueType <> jdtString then
+        raise xeAutomationInvalidRequest('Automation arg "value" with kind:"string" must be a string');
+      Exit(AArgs.S['value']);
+    end;
+    if SameText(AKind, 'bool') then begin
+      if lValueType <> jdtBool then
+        raise xeAutomationInvalidRequest('Automation arg "value" with kind:"bool" must be a boolean');
+      Exit(AArgs.B['value']);
+    end;
+    if SameText(AKind, 'formId') then begin
+      if lValueType <> jdtString then
+        raise xeAutomationInvalidRequest('Automation arg "value" with kind:"formId" must be a hex string');
+      lRawString := Trim(AArgs.S['value']);
+      lParsedFormId := xeAutomationParseFormIdHex(lRawString);
+      Exit(lParsedFormId);
+    end;
+    if SameText(AKind, 'formIdArray') then begin
+      if lValueType <> jdtArray then
+        raise xeAutomationInvalidRequest('Automation arg "value" with kind:"formIdArray" must be a JSON array of hex strings');
+      lArray := AArgs.A['value'];
+      lVarArray := VarArrayCreate([0, Pred(lArray.Count)], varInteger);
+      for i := 0 to Pred(lArray.Count) do begin
+        if lArray.Types[i] <> jdtString then
+          raise xeAutomationInvalidRequest('Automation arg "value[i]" with kind:"formIdArray" must be a hex string');
+        lVarArray[i] := xeAutomationParseFormIdHex(lArray.S[i]);
+      end;
+      Exit(lVarArray);
+    end;
+    raise xeAutomationInvalidRequest(
+      Format('Automation arg "kind" must be one of int/float/string/bool/formId/formIdArray, got "%s"', [AKind]));
+  end;
+
+  // With no kind hint, keep the automation surface close to JSON semantics and let
+  // native xEdit schema conversion decide whether the resulting Variant is valid.
+  case lValueType of
+    jdtString: Exit(AArgs.S['value']);
+    jdtBool:   Exit(AArgs.B['value']);
+    jdtInt:    Exit(AArgs.I['value']);
+    jdtLong:   Exit(AArgs.L['value']);
+    jdtFloat:  Exit(Double(AArgs.F['value']));
+    jdtNone:   Exit(Variants.Null);
+  else
+    raise xeAutomationInvalidRequest('Automation arg "value" is unsupported JSON type');
+  end;
+end;
+
+function xeAutomationElementsSetNativeValueBuildBeforeAfter(
+  const AElement: IwbElement): TJsonObject;
+var
+  lObject: TJsonObject;
+begin
+  Result := TJsonObject.Create;
+  try
+    Result.S['editValue'] := AElement.EditValue;
+    lObject := Result.O['object'];
+    xeAutomationWriteElementSummary(
+      lObject, AElement, xeAutomationElementLocatorPath(AElement));
+    // NativeValue can expose schema-specific Variant shapes that JSON cannot echo
+    // faithfully. Emit a native block only for unambiguous scalar round-trips; the
+    // canonical proof remains editValue plus the full element summary envelope.
+    try
+      case VarType(AElement.NativeValue) and varTypeMask of
+        varEmpty, varNull:
+          Result.O['native'].B['null'] := True;
+        varInteger, varSmallint, varShortInt, varByte, varWord:
+          Result.O['native'].I['intValue'] := AElement.NativeValue;
+        varLongWord, varInt64, varUInt64:
+          Result.O['native'].L['longValue'] := AElement.NativeValue;
+        varSingle, varDouble:
+          Result.O['native'].F['floatValue'] := AElement.NativeValue;
+        varBoolean:
+          Result.O['native'].B['boolValue'] := AElement.NativeValue;
+        varOleStr, varString, varUString:
+          Result.O['native'].S['stringValue'] := AElement.NativeValue;
+      end;
+    except
+      // Swallow best-effort native echo failures; editValue is canonical proof.
+    end;
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+function xeAutomationElementsSetNativeValue(const AArgs: TJsonObject): TJsonObject;
+var
+  lLocator: TxeAutomationLocator;
+  lRecord: IwbMainRecord;
+  lElement: IwbElement;
+  lKind: string;
+  lParsedValue: Variant;
+  lBefore: TJsonObject;
+  lDeniedReason: string;
+begin
+  if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
+    Result := xeAutomationErrorsBuildConsentRequired(
+      'elements.set_native_value', 'elements-mutation', lDeniedReason);
+    Exit;
+  end;
+
+  lLocator := xeAutomationParseLocator(AArgs, True, True);
+  lElement := xeAutomationRequireOwnedElement(lLocator, lRecord);
+  xeAutomationRequireWritableElementTarget(lElement);
+
+  if not AArgs.Contains('value') then
+    raise xeAutomationInvalidRequest('Automation arg "value" is required');
+
+  lKind := '';
+  if xeAutomationArgPresent(AArgs, 'kind') then begin
+    if AArgs.Types['kind'] <> jdtString then
+      raise xeAutomationInvalidRequest('Automation arg "kind" must be a string');
+    lKind := AArgs.S['kind'];
+  end;
+
+  lParsedValue := xeAutomationElementsSetNativeValueParseValue(AArgs, lKind);
+
+  lBefore := xeAutomationElementsSetNativeValueBuildBeforeAfter(lElement);
+  try
+    try
+      // NativeValue writes are schema-sensitive; wrap native conversion failures
+      // as mutation denials so callers can distinguish policy/schema rejection
+      // from malformed automation request parsing.
+      lElement.NativeValue := lParsedValue;
+    except
+      on E: ExeAutomationError do
+        raise;
+      on E: Exception do
+        raise xeAutomationMutationNotAllowed(
+          Format('Native value rejected by xEdit schema: %s', [E.Message]));
+    end;
+
+    Result := xeAutomationNewMutationResult(
+      lBefore.S['editValue'] <> lElement.EditValue,
+      lRecord._File.Modified,
+      lRecord._File.FileName,
+      lRecord.LoadOrderFormID.ToString(False),
+      xeAutomationElementLocatorPath(lElement)
+    );
+    Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+    Result.O['before'].Assign(lBefore);
+    Result.O['after'] := xeAutomationElementsSetNativeValueBuildBeforeAfter(lElement);
+  finally
+    lBefore.Free;
+  end;
 end;
 
 function xeAutomationElementsAddChildBuildAvailableTemplatesDetails(
@@ -621,6 +800,7 @@ begin
   xeAutomationRegisterCommand('elements.conflict_status', xeAutomationElementsConflictStatus);
   xeAutomationRegisterCommand('elements.required_masters', xeAutomationElementsRequiredMasters);
   xeAutomationRegisterCommand('elements.set_value', xeAutomationElementsSetValue);
+  xeAutomationRegisterCommand('elements.set_native_value', xeAutomationElementsSetNativeValue);
   xeAutomationRegisterCommand('elements.add_child', xeAutomationElementsAddChild);
   xeAutomationRegisterCommand('elements.remove_child', xeAutomationElementsRemoveChild);
   xeAutomationRegisterCommand('elements.copy_child_to', xeAutomationElementsCopyChildTo);

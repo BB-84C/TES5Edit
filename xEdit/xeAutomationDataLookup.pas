@@ -62,6 +62,7 @@ function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbF
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
 function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
 function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
+function xeAutomationParseFormIdHex(const AHex: string): Cardinal;
 function xeAutomationRequireFormID(const AFormID: string): TwbFormID;
 function xeAutomationGlobMatchesCI(const AValue, APattern: string): Boolean;
 function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string = ''): TxeAutomationMainRecordSearch;
@@ -132,6 +133,24 @@ begin
   // Treat explicit JSON null and absent keys both as "not present"; any other
   // JSON type is present so the per-arg validators can reject malformed input.
   Result := Assigned(AArgs) and AArgs.Contains(AKey) and not AArgs.IsNull(AKey);
+end;
+
+function xeAutomationParseFormIdHex(const AHex: string): Cardinal;
+var
+  lTrimmed: string;
+  lParsed: Int64;
+begin
+  lTrimmed := Trim(AHex);
+  if lTrimmed = '' then
+    raise xeAutomationInvalidRequest('FormID hex string is empty');
+
+  // Use an Int64 intermediate so malformed/overflowing public FormID strings are
+  // rejected at the request boundary before native xEdit mutation code runs.
+  if not TryStrToInt64('$' + lTrimmed, lParsed) then
+    raise xeAutomationInvalidRequest(Format('FormID hex string is not parsable: %s', [AHex]));
+  if (lParsed < 0) or (lParsed > Cardinal(-1)) then
+    raise xeAutomationInvalidRequest(Format('FormID hex string is out of Cardinal range: %s', [AHex]));
+  Result := Cardinal(lParsed);
 end;
 
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
