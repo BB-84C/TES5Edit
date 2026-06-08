@@ -255,7 +255,7 @@ begin
   if AKind <> '' then begin
     if SameText(AKind, 'int') then begin
       if lValueType = jdtString then begin
-        if not TryStrToInt64(AArgs.S['value'], lInt64Value) then
+        if not TryStrToInt64(Trim(AArgs.S['value']), lInt64Value) then
           raise xeAutomationInvalidRequest('Automation arg "value" with kind:"int" must be a parsable integer string');
         Exit(lInt64Value);
       end;
@@ -289,6 +289,8 @@ begin
       if lValueType <> jdtArray then
         raise xeAutomationInvalidRequest('Automation arg "value" with kind:"formIdArray" must be a JSON array of hex strings');
       lArray := AArgs.A['value'];
+      // varLongWord matches Cardinal's unsigned 32-bit range; FormIDs can exceed
+      // signed varInteger and would otherwise overflow into negative values.
       lVarArray := VarArrayCreate([0, Pred(lArray.Count)], varLongWord);
       for i := 0 to Pred(lArray.Count) do begin
         if lArray.Types[i] <> jdtString then
