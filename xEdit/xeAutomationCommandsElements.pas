@@ -35,13 +35,6 @@ begin
     - IwbFile(Pointer(AList.Objects[AIndex2])).LoadOrder;
 end;
 
-function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
-begin
-  // Treat explicit JSON null and absent keys both as "not present"; any other
-  // JSON type is present so the per-arg validators can reject malformed input.
-  Result := Assigned(AArgs) and AArgs.Contains(AKey) and not AArgs.IsNull(AKey);
-end;
-
 function xeAutomationCollectRequiredMasters(const AElement: IwbElement; const ATargetFile: IwbFile): TStringList;
 var
   lMasters: TwbFilesSet;
@@ -431,50 +424,172 @@ begin
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
 end;
 
+function xeAutomationCopyChildAddMastersIfRequested(
+  const ASourceElement: IwbElement; const ATargetFile: IwbFile;
+  const AAddRequiredMasters: Boolean): TJsonObject;
+var
+  lRequired: TStringList;
+  lAdded, lAlreadyPresent, lSkipped: TJsonArray;
+  lMaster: IwbFile;
+  i: Integer;
+begin
+  Result := TJsonObject.Create;
+  try
+    lAdded          := Result.A['added'];
+    lAlreadyPresent := Result.A['alreadyPresent'];
+    lSkipped        := Result.A['skipped'];
+
+    lRequired := xeAutomationCollectRequiredMasters(ASourceElement, ATargetFile);
+    try
+      for i := 0 to Pred(lRequired.Count) do begin
+        lMaster := IwbFile(Pointer(lRequired.Objects[i]));
+        if ATargetFile.HasMaster(lMaster.FileName) then begin
+          lAlreadyPresent.Add(lMaster.FileName);
+          Continue;
+        end;
+        if not AAddRequiredMasters then begin
+          // Track missing masters as skipped; we'll raise mutation_not_allowed
+          // after the walk so the report still contains the full diagnostic set.
+          lSkipped.Add(lMaster.FileName);
+          Continue;
+        end;
+        ATargetFile.AddMasterIfMissing(lMaster.FileName);
+        lAdded.Add(lMaster.FileName);
+      end;
+    finally
+      lRequired.Free;
+    end;
+
+    if not AAddRequiredMasters and (lSkipped.Count > 0) then
+      raise xeAutomationMutationNotAllowed(
+        'Automation mutation target is missing required masters; pass addRequiredMasters:true to add them');
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
+procedure xeAutomationCopyChildApplySortOrderFixup(
+  const ANewElement: IwbElement; const ATargetIndex: Integer;
+  const APlacement: TJsonObject);
+var
+  lContainer: IwbContainerElementRef;
+begin
+  // Per design §15.2: only fix up sort order when targetIndex is a concrete
+  // non-wbAssignAdd integer and the copied child lives in a container reference
+  // that xEdit can reorder by SortOrder. Otherwise native Assign's placement is
+  // the only mutation and the response reports no explicit sort-order pass.
+  APlacement.B['sortOrderApplied'] := False;
+  if ATargetIndex = wbAssignAdd then
+    Exit;
+  if not Assigned(ANewElement) then
+    Exit;
+  if not Supports(ANewElement.Container, IwbContainerElementRef, lContainer) then
+    Exit;
+
+  // Mirror xEdit/xeMainForm.pas drag/drop sort fix: set SortOrder on the new
+  // element to the requested position, then ask the container to re-sort and
+  // refresh memory order. IwbContainerBase exposes SortBySortOrder as the native
+  // operation rather than a separate boolean predicate, so support for the
+  // container-ref seam is the precise automation gate available here.
+  ANewElement.SortOrder := ATargetIndex;
+  lContainer.SortBySortOrder;
+  lContainer.ResetMemoryOrder;
+  APlacement.B['sortOrderApplied'] := True;
+end;
+
 function xeAutomationElementsCopyChildTo(const AArgs: TJsonObject): TJsonObject;
 var
-  lSourceLocator: TxeAutomationLocator;
-  lTargetLocator: TxeAutomationLocator;
-  lSourceRecord: IwbMainRecord;
-  lTargetRecord: IwbMainRecord;
+  lSourceLocator, lTargetLocator: TxeAutomationLocator;
+  lSourceRecord, lTargetRecord:   IwbMainRecord;
   lSourceElement: IwbElement;
   lTargetElement: IwbElement;
   lNewElement: IwbElement;
+  lTargetIndex: Integer;
+  lAddRequiredMasters: Boolean;
   lDeniedReason: string;
+  lPlacement: TJsonObject;
+  lMasters: TJsonObject;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
-    Result := xeAutomationErrorsBuildConsentRequired('elements.copy_child_to', 'elements-mutation', lDeniedReason);
+    Result := xeAutomationErrorsBuildConsentRequired(
+      'elements.copy_child_to', 'elements-mutation', lDeniedReason);
     Exit;
   end;
 
-  // Copy requests carry both locators explicitly so callers never have to reason
-  // about hidden clipboard/session state when reviewing or replaying a mutation.
   lSourceLocator := xeAutomationParseNestedLocatorArg(AArgs, 'source', True, True);
   lTargetLocator := xeAutomationParseNestedLocatorArg(AArgs, 'target', True, True);
 
   if Trim(lSourceLocator.Path) = '' then
-    raise xeAutomationInvalidTarget('Automation mutation source must address an existing child element');
+    raise xeAutomationInvalidTarget(
+      'Automation mutation source must address an existing child element');
+
+  if xeAutomationArgPresent(AArgs, 'targetIndex') then begin
+    if AArgs.Types['targetIndex'] <> jdtInt then
+      raise xeAutomationInvalidRequest('Automation arg "targetIndex" must be an integer');
+    lTargetIndex := AArgs.I['targetIndex'];
+  end else begin
+    lTargetIndex := wbAssignAdd;
+  end;
+
+  // Per design §3.G Overseer override: default FALSE to preserve backward
+  // compatibility of an already-shipped verb. Callers opt into GUI parity
+  // explicitly by passing addRequiredMasters:true.
+  lAddRequiredMasters := False;
+  if xeAutomationArgPresent(AArgs, 'addRequiredMasters') then begin
+    if AArgs.Types['addRequiredMasters'] <> jdtBool then
+      raise xeAutomationInvalidRequest('Automation arg "addRequiredMasters" must be a boolean');
+    lAddRequiredMasters := AArgs.B['addRequiredMasters'];
+  end;
 
   lSourceElement := xeAutomationRequireElement(lSourceLocator, lSourceRecord);
-  // Copy targets are writable mutation targets, so they must be records owned by
-  // the addressed file instead of master records found through compatibility lookup.
   lTargetElement := xeAutomationRequireOwnedElement(lTargetLocator, lTargetRecord);
-  xeAutomationRequireCopyTarget(lTargetElement, lSourceElement);
+  xeAutomationRequireCopyTargetAt(lTargetElement, lSourceElement, lTargetIndex);
 
-  // Like other element mutations, copy only mutates loaded session memory. Save
-  // behavior stays behind an explicit command instead of piggybacking here.
-  lNewElement := lTargetElement.Assign(wbAssignAdd, lSourceElement, False);
-  if not Assigned(lNewElement) then
-    raise xeAutomationMutationNotAllowed('Automation mutation target cannot accept the addressed source child');
+  // Preflight masters first so addRequiredMasters:false fails before any
+  // structural mutation. The helper handles both branches and produces the
+  // masters block whether we succeed or raise.
+  lMasters := xeAutomationCopyChildAddMastersIfRequested(
+    lSourceElement, lTargetRecord._File, lAddRequiredMasters);
+  try
+    lNewElement := lTargetElement.Assign(lTargetIndex, lSourceElement, False);
+    if not Assigned(lNewElement) then
+      raise xeAutomationMutationNotAllowed(
+        'Automation mutation target cannot accept the addressed source child');
 
-  Result := xeAutomationNewMutationResult(
-    True,
-    lTargetRecord._File.Modified,
-    lTargetRecord._File.FileName,
-    lTargetRecord.LoadOrderFormID.ToString(False),
-    xeAutomationElementLocatorPath(lNewElement)
-  );
-  Result.O['file'] := xeAutomationNewFileSummary(lTargetRecord._File);
+    Result := xeAutomationNewMutationResult(
+      True,
+      lTargetRecord._File.Modified,
+      lTargetRecord._File.FileName,
+      lTargetRecord.LoadOrderFormID.ToString(False),
+      xeAutomationElementLocatorPath(lNewElement)
+    );
+    Result.O['file'] := xeAutomationNewFileSummary(lTargetRecord._File);
+
+    // Echo both locators so callers can re-resolve target/source post-mutation
+    // without re-parsing their original request.
+    Result.O['source'].O['locator'].S['file']   := lSourceRecord._File.FileName;
+    Result.O['source'].O['locator'].S['formId'] := lSourceRecord.LoadOrderFormID.ToString(False);
+    Result.O['source'].O['locator'].S['path']   := lSourceLocator.Path;
+    Result.O['target'].O['locator'].S['file']   := lTargetRecord._File.FileName;
+    Result.O['target'].O['locator'].S['formId'] := lTargetRecord.LoadOrderFormID.ToString(False);
+    Result.O['target'].O['locator'].S['path']   := lTargetLocator.Path;
+
+    lPlacement := Result.O['placement'];
+    if lTargetIndex = wbAssignAdd then
+      lPlacement.S['mode'] := 'append'
+    else begin
+      lPlacement.S['mode']  := 'index';
+      lPlacement.I['value'] := lTargetIndex;
+    end;
+    xeAutomationCopyChildApplySortOrderFixup(lNewElement, lTargetIndex, lPlacement);
+
+    Result.O['masters'] := lMasters;
+    lMasters := nil;
+  except
+    lMasters.Free;
+    raise;
+  end;
 end;
 
 procedure xeAutomationRegisterElementsCommands;

@@ -61,6 +61,7 @@ type
 function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
 function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
+function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
 function xeAutomationRequireFormID(const AFormID: string): TwbFormID;
 function xeAutomationGlobMatchesCI(const AValue, APattern: string): Boolean;
 function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string = ''): TxeAutomationMainRecordSearch;
@@ -124,6 +125,13 @@ begin
   lMasters := Result.A['masters'];
   for i := 0 to Pred(AFile.MasterCount[True]) do
     lMasters.Add(AFile.Masters[i, True].FileName);
+end;
+
+function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
+begin
+  // Treat explicit JSON null and absent keys both as "not present"; any other
+  // JSON type is present so the per-arg validators can reject malformed input.
+  Result := Assigned(AArgs) and AArgs.Contains(AKey) and not AArgs.IsNull(AKey);
 end;
 
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
