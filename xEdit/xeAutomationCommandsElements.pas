@@ -453,7 +453,22 @@ begin
           lSkipped.Add(lMaster.FileName);
           Continue;
         end;
-        ATargetFile.AddMasterIfMissing(lMaster.FileName);
+        if Assigned(lMaster) and (lMaster.LoadOrder >= ATargetFile.LoadOrder) then
+          raise xeAutomationInvalidTarget(Format(
+            'Automation required master "%s" can not be added to "%s" because it does not load before the target',
+            [lMaster.FileName, ATargetFile.FileName]
+          ));
+        try
+          ATargetFile.AddMasterIfMissing(lMaster.FileName, True, True);
+        except
+          on E: ExeAutomationError do
+            raise;
+          on E: Exception do
+            raise xeAutomationInvalidTarget(Format(
+              'Automation required masters could not be added to "%s": %s',
+              [ATargetFile.FileName, E.Message]
+            ));
+        end;
         lAdded.Add(lMaster.FileName);
       end;
     finally
@@ -552,9 +567,10 @@ begin
   lTargetElement := xeAutomationRequireOwnedElement(lTargetLocator, lTargetRecord);
   xeAutomationRequireCopyTargetAt(lTargetElement, lSourceElement, lTargetIndex);
 
-  // Preflight masters first so addRequiredMasters:false fails before any
-  // structural mutation. The helper handles both branches and produces the
-  // masters block whether we succeed or raise.
+  // Build the masters report before Assign so addRequiredMasters:false fails
+  // before any structural mutation. On failure the surrounding except clause
+  // frees the report before the raise propagates, so callers never see a
+  // partial masters block on errors.
   lMasters := xeAutomationCopyChildAddMastersIfRequested(
     lSourceElement, lTargetRecord._File, lAddRequiredMasters);
   try
