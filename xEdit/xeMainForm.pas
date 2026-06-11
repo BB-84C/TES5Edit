@@ -5709,6 +5709,42 @@ begin
         Stream := fcWhatsNew.CreateReadStream;
         try
           reMain.Lines.LoadFromStream(Stream);
+          // BB-84C automation fork: append the r1..r4 automation changelog after
+          // the upstream What's New RTF so this build's audience can see what is
+          // actually different from upstream 4.1.5p without leaving the binary.
+          // SelStart/SelLength/SelAttributes are used so the appended block can
+          // honour the bold heading style without touching the embedded DFM.
+          try
+            reMain.SelStart := reMain.GetTextLen;
+            reMain.SelLength := 0;
+            reMain.SelAttributes.Style := [fsBold];
+            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r4' + CRLF + CRLF;
+            reMain.SelAttributes.Style := [];
+            reMain.SelText :=
+              'This binary is the automation-focused fork at github.com/BB-84C/TES5Edit. ' +
+              'The summary below covers everything new since upstream xEdit 4.1.5p.' + CRLF + CRLF +
+              'r4 (this release):' + CRLF +
+              '  - Internal version bumped from 4.1.5p to 4.1.6r4 so VersionString, wbVersionNumber() (script API), and the window title agree with the GitHub tag scheme v4.1.6-automation.N.' + CRLF +
+              '  - GitHub update check now reads BB-84C/TES5Edit releases and parses v<base>-automation.<rev> tags instead of upstream xedit-<version>.' + CRLF +
+              '  - NexusMods update check is now off by default; this fork is not published on NexusMods. The Options dialog still lets a user re-enable it.' + CRLF +
+              '  - What''s New tab now carries this r1..r4 changelog block.' + CRLF + CRLF +
+              'r3 (2026-06-08):' + CRLF +
+              '  - Phase 13 elements.* mutation surface. 9 new verbs: set_native_value, set_to_default, clear, move_up, move_down, next_member, previous_member, edit_capabilities, assign_templates. Plus extended add_child (template selectors) and copy_child_to (placement + addRequiredMasters).' + CRLF +
+              '  - Automation contract bumped 0.10 to 0.11 with a frozen additive supports.elementsMutation block alongside supports.jobs.kinds.' + CRLF +
+              '  - All new mutation gates defer to native xEdit predicates (IsEditable, CanAssign, CanMoveUp/Down, CanChangeMember, IsClearable, IwbStructDef.OptionalFromElement). No CLI-side allowlists.' + CRLF +
+              '  - Phase 12 Starfield plain .esp write enablement on files.create and master-add.' + CRLF +
+              '  - Release packaging fixed: Edit Scripts/ and Themes/ are no longer nested-duplicated in the zip.' + CRLF + CRLF +
+              'r2 (2026-05-26):' + CRLF +
+              '  - Automation daemon hardened against named-pipe client timing races.' + CRLF +
+              '  - GUI unsaved-change reminder suppressed while daemon automation is running; session.save remains the explicit persistence path.' + CRLF +
+              '  - Daemon-safe script file globals restored: FileCount, FileByIndex, FileByName, FileByLoadOrder, FileByLoadOrderFileID.' + CRLF +
+              '  - records.create signature allow-list (KYWD / MISC) removed; signature support now delegated to native xEdit group/record Add. No protocol-side signature length or shape gate.' + CRLF +
+              '  - Starfield medium header-flag exposure on files.create, files.set_header_flags, file-hygiene capabilities, and header-flag readbacks.' + CRLF + CRLF +
+              'r1 (2026-05-13):' + CRLF +
+              '  - Initial daemon-based automation surface for loaded xEdit sessions: patch-building, validation, cleaning, headless script execution, record navigation primitives.' + CRLF +
+              '  - JVCL interpreter auth-hook patch pinned in the BB-84C/jvcl fork so fresh clones can build the scripted automation surface.' + CRLF;
+          except
+          end;
           if wbThemesSupported then begin
             reMain.SelectAll;
             reMain.SelAttributes.Color := clWindowText;
@@ -22622,27 +22658,37 @@ end;
 { TwbCheckGitHubReleaseThread }
 
 procedure TwbCheckGitHubReleaseThread.Execute;
+const
+  csAutomationInfix = '-automation.';
 var
   J: TJsonBaseObject;
   A: TJsonArray;
-  i: Integer;
+  i, p: Integer;
   s: string;
 
   v, vmax: TwbVersion;
 begin
   vmax := '';
   try
-    J := TJsonBaseObject.ParseUtf8(GetUrlContent('https://api.github.com/repos/TES5Edit/TES5Edit/releases'));
+    // BB-84C automation fork releases live on this repo, not upstream
+    // TES5Edit/TES5Edit. Tag scheme is 'v<base>-automation.<rev>'
+    // (e.g. 'v4.1.6-automation.4'). Translate to a TwbVersion string
+    // '<base>r<rev>' (e.g. '4.1.6r4') so comparison against the binary's
+    // VersionString stays semantically meaningful.
+    J := TJsonBaseObject.ParseUtf8(GetUrlContent('https://api.github.com/repos/BB-84C/TES5Edit/releases'));
     try
       if J is TJsonArray then begin
         A := J as TJsonArray;
         for i := 0 to Pred(A.Count) do try
           s := A.O[i].S['tag_name'];
-          if s.StartsWith('xedit-') then try
-            v := Copy(s, Succ(Length('xedit-')), High(Integer));
-            if v > vmax then
-              vmax := v;
-          except
+          if s.StartsWith('v') then begin
+            p := Pos(csAutomationInfix, s);
+            if p > 1 then try
+              v := Copy(s, 2, p - 2) + 'r' + Copy(s, p + Length(csAutomationInfix), High(Integer));
+              if v > vmax then
+                vmax := v;
+            except
+            end;
           end;
         except
         end;
