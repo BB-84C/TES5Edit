@@ -54,16 +54,22 @@ type
   end;
 
 var
+  // BB-84C automation fork divergence from upstream 4.1.5p: bumped to 4.1.6r4 so
+  // VersionString.ToString, wbVersionNumber() (script API), wbApplicationTitle,
+  // and the GitHub update-check comparison all agree with the GitHub tag
+  // 'v4.1.6-automation.4' instead of pretending to be upstream 4.1.5p.
   VersionString : TwbVersion = (
     Major   : 4;
     Minor   : 1;
-    Release : 5;
-    Build   : 'p';
+    Release : 6;
+    Build   : 'r4';
     Title   : '';
   );
 
 const
-  wbWhatsNewVersion : Integer = 04010511;
+  // Encoded as $04_01_06_04 so it sorts strictly above the upstream 04010511 and
+  // re-fires the What's New tab once after this bump.
+  wbWhatsNewVersion : Integer = 04010604;
   wbDeveloperMessageVersion : Integer = 04010507;
   wbDevCRC32App : Cardinal = $FFFFFFE4;
 
@@ -356,7 +362,11 @@ var
   wbShowTip                          : Boolean    = True;
   wbPatron                           : Boolean    = False;
   wbNoGitHubCheck                    : Boolean    = False;
-  wbNoNexusModsCheck                 : Boolean    = False;
+  // BB-84C automation fork does not publish to NexusMods. Default the upstream
+  // NexusMods release-check thread off so we do not waste an HTTP round trip on
+  // a mod page that lists upstream 4.1.5p as 'current'. The Options dialog
+  // checkbox still lets a user opt back in.
+  wbNoNexusModsCheck                 : Boolean    = True;
 
   wbCheckExpectedBytes               : Boolean    = True;
 
@@ -397,7 +407,8 @@ var
   wbHelpUrl                          : string     = 'https://tes5edit.github.io/docs';
   wbVideosUrl                        : string     = 'https://www.youtube.com/playlist?list=PLlN8weLk86XiGXJI4DaRa1QIq1zhDpD8V';
   wbNexusModsUrl                     : string;
-  wbGitHubUrl                        : string     = 'https://github.com/TES5Edit/TES5Edit/releases';
+  // BB-84C automation fork. Update-check thread reads this repo's releases too.
+  wbGitHubUrl                        : string     = 'https://github.com/BB-84C/TES5Edit/releases';
   wbDiscordUrl                       : string     = 'https://discord.gg/5t8RnNQ';
   wbPatreonUrl                       : string     = 'https://www.patreon.com/ElminsterAU';
   wbKoFiUrl                          : string     = 'https://www.ko-fi.com/ElminsterAU';
@@ -5156,7 +5167,7 @@ procedure wbVCI1ToStrAfterFO4(var aValue:string; aBasePtr: Pointer; aEndPtr: Poi
 procedure wbTimeStampToString(var aValue:string; aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement; aType: TwbCallbackType);
 
 /// <summary>Collapse and truncate the given text to fit in the given width.</summary>
-function ShortenText(const aText: string; const aWidth: Integer = 64; const aPlaceholder: string = '…'): string;
+function ShortenText(const aText: string; const aWidth: Integer = 64; const aPlaceholder: string = 'ï¿½'): string;
 
 procedure wbInitRecords;
 
