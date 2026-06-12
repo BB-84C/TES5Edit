@@ -5709,7 +5709,7 @@ begin
         Stream := fcWhatsNew.CreateReadStream;
         try
           reMain.Lines.LoadFromStream(Stream);
-          // BB-84C automation fork: append the r1..r4 automation changelog after
+          // BB-84C automation fork: append the r1..r5 automation changelog after
           // the upstream What's New RTF so this build's audience can see what is
           // actually different from upstream 4.1.5p without leaving the binary.
           // SelStart/SelLength/SelAttributes are used so the appended block can
@@ -5718,16 +5718,26 @@ begin
             reMain.SelStart := reMain.GetTextLen;
             reMain.SelLength := 0;
             reMain.SelAttributes.Style := [fsBold];
-            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r4' + CRLF + CRLF;
+            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r5' + CRLF + CRLF;
             reMain.SelAttributes.Style := [];
             reMain.SelText :=
               'This binary is the automation-focused fork at github.com/BB-84C/TES5Edit. ' +
               'The summary below covers everything new since upstream xEdit 4.1.5p.' + CRLF + CRLF +
-              'r4 (this release):' + CRLF +
+              'r5 (this release):' + CRLF +
+              '  - FULL/DESC and other translatable inline fields on non-localized community-translated ESMs (Chinese / Japanese / Russian / Korean) now decode correctly without requiring per-mod .cpoverride sidecars.' + CRLF +
+              '  - At the inline string-read boundary, raw bytes flagged dfTranslatable are probed against a strict RFC 3629 UTF-8 validator (overlong / surrogate / noncharacter / C1-control rejection, ASCII bypass, leading-BOM strip); on success the field is decoded as UTF-8, otherwise the existing CP-1252 path runs unchanged.' + CRLF +
+              '  - IMPORTANT - this is a READ-SIDE change only. The GUI Edit Value / save path still encodes through the existing bsdGetEncoding chain (CP-1252 default unless overridden). If you autodetect a UTF-8 CJK string in the GUI and then save the file through xEdit, the string round-trips through CP-1252 and the on-disk bytes get corrupted. Symmetric UTF-8 read+write requires either launching with -cp:utf-8 / -cp-trans:utf-8, or shipping a .cpoverride sidecar declaring the right code page. Read-only inspection (conflict audit, override review, translation-tooling sourcing) is the safe workflow without the flag/sidecar.' + CRLF +
+              '  - Pure-ASCII strings still walk the CP-1252 path so legacy English mods are byte-for-byte unchanged.' + CRLF +
+              '  - Explicit .cpoverride sidecars and header SNAM <cp:XXXX> markers always win over autodetect. IwbFile carries a latched HasExplicitEncodingOverride flag so explicit 1252 still suppresses autodetect.' + CRLF +
+              '  - .cpoverride / SNAM <cp:XXXX> accept bare codepage numbers (1252, 932, 936, 65001), windows-NNNN, utf-8, or utf8 - they do NOT accept the cp1252-style prefix.' + CRLF +
+              '  - EditorIDs, signatures, FormID labels and other non-translatable fields are excluded from autodetect and stay on the CP-1252 read path.' + CRLF +
+              '  - Automation contract bumped 0.11 to 0.12 with an additive supports.stringDecoding block (autodetect on/off, defense layers, override-wins list, supported -cp / -cp-trans / -cp-general startup flags, active fallback encoding, and the documented read/write asymmetry note).' + CRLF +
+              '  - Internal version bumped from 4.1.6r4 to 4.1.6r5; GitHub update check follows the v4.1.6-automation.5 tag.' + CRLF + CRLF +
+              'r4 (2026-06-11):' + CRLF +
               '  - Internal version bumped from 4.1.5p to 4.1.6r4 so VersionString, wbVersionNumber() (script API), and the window title agree with the GitHub tag scheme v4.1.6-automation.N.' + CRLF +
               '  - GitHub update check now reads BB-84C/TES5Edit releases and parses v<base>-automation.<rev> tags instead of upstream xedit-<version>.' + CRLF +
               '  - NexusMods update check is now off by default; this fork is not published on NexusMods. The Options dialog still lets a user re-enable it.' + CRLF +
-              '  - What''s New tab now carries this r1..r4 changelog block.' + CRLF + CRLF +
+              '  - What''s New tab now carries this r1..r5 changelog block.' + CRLF + CRLF +
               'r3 (2026-06-08):' + CRLF +
               '  - Phase 13 elements.* mutation surface. 9 new verbs: set_native_value, set_to_default, clear, move_up, move_down, next_member, previous_member, edit_capabilities, assign_templates. Plus extended add_child (template selectors) and copy_child_to (placement + addRequiredMasters).' + CRLF +
               '  - Automation contract bumped 0.10 to 0.11 with a frozen additive supports.elementsMutation block alongside supports.jobs.kinds.' + CRLF +

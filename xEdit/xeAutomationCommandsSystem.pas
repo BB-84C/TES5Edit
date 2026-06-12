@@ -138,7 +138,10 @@ var
   lScripts: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  Result.S['contractVersion'] := '0.11';
+  // r5 (0.11 -> 0.12): additive supports.stringDecoding surface advertises the
+  // r5 inline UTF-8 autodetect for translatable fields plus the existing
+  // -cp / -cp-trans / -cp-general startup flags. No frozen surface changes.
+  Result.S['contractVersion'] := '0.12';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -294,6 +297,64 @@ begin
   Result.O['supports'].O['elementsMutation'].S['mutationPolicy']  := 'native-xedit-predicates';
   Result.O['supports'].O['elementsMutation'].B['consentRequired'] := True;
   Result.O['supports'].O['elementsMutation'].B['iKnowWhatImDoing'] := wbIKnowWhatImDoing;
+
+  // r5 (contract 0.12): expose the inline string-decoding policy so MCP
+  // clients can detect that this fork autodetects UTF-8 for translatable
+  // fields and so callers know which startup flags switch the global default.
+  Result.O['supports'].O['stringDecoding'].B['translatableInlineUtf8Autodetect'] := True;
+  // defaultFallbackEncoding names the encoding the autodetect falls through to
+  // when no per-def / per-file / CLI override applies. activeFallbackEncoding
+  // reports the encoding currently in effect for the running daemon - it
+  // changes when -cp:<...> / -cp-trans:<...> are passed at startup or when
+  // the game language sets a non-1252 default through wbEncodingForLanguage.
+  Result.O['supports'].O['stringDecoding'].S['defaultFallbackEncoding'] := 'cp1252';
+  if Assigned(wbEncodingTrans) then
+    Result.O['supports'].O['stringDecoding'].S['activeFallbackEncoding'] := wbEncodingTrans.EncodingName
+  else
+    Result.O['supports'].O['stringDecoding'].S['activeFallbackEncoding'] := 'cp1252';
+  Result.O['supports'].O['stringDecoding'].S['asciiBehavior']       := 'cp1252-path-preserved';
+  Result.O['supports'].O['stringDecoding'].A['autodetectScope'].Add('dfTranslatable');
+  // Defense layers (RFC 3629 strict + heuristics) - clients can audit
+  // expected behavior against these named layers when filing regressions.
+  with Result.O['supports'].O['stringDecoding'].A['defenseLayers'] do begin
+    Add('rfc3629-strict');
+    Add('overlong-tightening');
+    Add('surrogate-rejection');
+    Add('noncharacter-rejection');
+    Add('c1-control-rejection');
+    Add('ascii-bypass');
+    Add('bom-strip-leading');
+  end;
+  // Explicit per-file/per-def overrides always win. Latched-boolean check on
+  // IwbFile, so explicit cp1252 still suppresses autodetect.
+  with Result.O['supports'].O['stringDecoding'].A['overrideWins'] do begin
+    Add('cpoverride-sidecar');
+    Add('snam-cp-marker');
+    Add('per-def-encoding-override');
+  end;
+  // Startup-only CLI flags that switch the global default encoding before any
+  // plugin load. Already-shipped flags - documented here as supported.
+  with Result.O['supports'].O['stringDecoding'].O['cliFlags'] do begin
+    A['translatableDefault'].Add('-cp:<encoding>');
+    A['translatableDefault'].Add('-cp-trans:<encoding>');
+    A['nonTranslatableDefault'].Add('-cp-general:<encoding>');
+    A['acceptedValues'].Add('utf-8');
+    A['acceptedValues'].Add('utf8');
+    A['acceptedValues'].Add('65001');
+    A['acceptedValues'].Add('1252');
+    A['acceptedValues'].Add('936');
+    A['acceptedValues'].Add('932');
+    A['acceptedValues'].Add('1251');
+    A['acceptedValues'].Add('<any-windows-codepage-number>');
+    S['scope'] := 'startup-only';
+  end;
+  // Known limitation: autodetect runs on read; the GUI write path still uses
+  // the bsdGetEncoding chain (CP-1252 default unless override or CLI flag is
+  // set). Saving an autodetected UTF-8 string through xEdit will round-trip
+  // through CP-1252 encode and mojibake on disk. Use -cp:utf-8 / cpoverride
+  // for read+write symmetric UTF-8.
+  Result.O['supports'].O['stringDecoding'].S['readWriteAsymmetry'] :=
+    'read-autodetects-write-uses-bsdGetEncoding';
 end;
 
 initialization
