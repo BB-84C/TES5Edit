@@ -765,6 +765,12 @@ type
 
     flEncoding               : TEncoding;
     flEncodingTrans          : TEncoding;
+    // r5: latched True only after a successful .cpoverride or header SNAM
+    // <cp:XXXX> parse below. Tracked separately from flEncodingTrans because
+    // wbMBCSEncoding can return the same TEncoding singleton even when the
+    // user has explicitly declared a code page (e.g. cp1252 == default), and
+    // the inline UTF-8 autodetect must defer to explicit user intent.
+    flHasExplicitEncodingOverride : Boolean;
 
     flAllowHardcodedRangeUse : Boolean;
     flHardcodedGeneration    : Integer;
@@ -930,6 +936,7 @@ type
     procedure SetHasNoFormID(Value: Boolean);
 
     function GetEncoding(aTranslatable: Boolean): TEncoding;
+    function GetHasExplicitEncodingOverride: Boolean;
 
     function GetCompareToFile: IwbFile;
     procedure RemoveIdenticalDeltaFast;
@@ -3181,6 +3188,10 @@ begin
         s := Strings[0].Trim;
         if s <> '' then begin
           flEncodingTrans := wbMBCSEncoding(s);
+          // r5: latch the explicit-override marker so the r5 inline UTF-8
+          // autodetect in TwbStringDef.ToStringNative defers to user intent
+          // even when wbMBCSEncoding returns a singleton equal to the default.
+          flHasExplicitEncodingOverride := True;
           flProgress(Format('Using encoding (from .cpoverride): %s', [flEncodingTrans.EncodingName]));
          end;
       end;
@@ -4087,6 +4098,15 @@ begin
     if not Assigned(Result) then
       Result := wbEncoding;
   end;
+end;
+
+function TwbFile.GetHasExplicitEncodingOverride: Boolean;
+begin
+  // r5: read-side gate for the inline UTF-8 autodetect added to
+  // TwbStringDef.ToStringNative. Latched only by .cpoverride parse or
+  // header SNAM <cp:XXXX> parse below; never inferred from flEncodingTrans
+  // identity because explicit cp1252 must still suppress autodetect.
+  Result := flHasExplicitEncodingOverride;
 end;
 
 function TwbFile.GetFile: IwbFile;
@@ -5738,6 +5758,10 @@ begin
         s := Copy(s, 5, 4);
         try
           flEncodingTrans := wbMBCSEncoding(s);
+          // r5: latch the explicit-override marker so the r5 inline UTF-8
+          // autodetect in TwbStringDef.ToStringNative defers to user intent
+          // even when wbMBCSEncoding returns a singleton equal to the default.
+          flHasExplicitEncodingOverride := True;
           flProgress(Format('Using encoding (from File Header Description): %s', [flEncodingTrans.EncodingName]));
         except
           on E: Exception do

@@ -54,22 +54,22 @@ type
   end;
 
 var
-  // BB-84C automation fork divergence from upstream 4.1.5p: bumped to 4.1.6r4 so
+  // BB-84C automation fork divergence from upstream 4.1.5p: bumped to 4.1.6r5 so
   // VersionString.ToString, wbVersionNumber() (script API), wbApplicationTitle,
   // and the GitHub update-check comparison all agree with the GitHub tag
-  // 'v4.1.6-automation.4' instead of pretending to be upstream 4.1.5p.
+  // 'v4.1.6-automation.5' instead of pretending to be upstream 4.1.5p.
   VersionString : TwbVersion = (
     Major   : 4;
     Minor   : 1;
     Release : 6;
-    Build   : 'r4';
+    Build   : 'r5';
     Title   : '';
   );
 
 const
-  // Encoded as $04_01_06_04 so it sorts strictly above the upstream 04010511 and
-  // re-fires the What's New tab once after this bump.
-  wbWhatsNewVersion : Integer = 04010604;
+  // Encoded as $04_01_06_05 so it sorts strictly above the prior r4 (04010604)
+  // and re-fires the What's New tab once after this bump.
+  wbWhatsNewVersion : Integer = 04010605;
   wbDeveloperMessageVersion : Integer = 04010507;
   wbDevCRC32App : Cardinal = $FFFFFFE4;
 
@@ -1658,6 +1658,11 @@ type
     procedure SetHasNoFormID(Value: Boolean);
 
     function GetEncoding(aTranslatable: Boolean): TEncoding;
+    // r5: latched true when the file has an explicit per-file encoding override
+    // set via .cpoverride sidecar or SNAM <cp:XXXX> marker. Latched, not
+    // inferred from encoding identity, so explicit cp1252 still suppresses
+    // the inline UTF-8 autodetect added in r5.
+    function GetHasExplicitEncodingOverride: Boolean;
 
     function GetCompareToFile: IwbFile;
 
@@ -1778,6 +1783,11 @@ type
 
     property Encoding[aTranslatable: Boolean]: TEncoding
       read GetEncoding;
+
+    // r5: read-side gate for the inline UTF-8 autodetect. See
+    // GetHasExplicitEncodingOverride for the latching contract.
+    property HasExplicitEncodingOverride: Boolean
+      read GetHasExplicitEncodingOverride;
 
     property CompareToFile: IwbFile
       read GetCompareToFile;
@@ -16259,6 +16269,179 @@ begin
   Result := aString;
 end;
 
+{ TwbStringDef helpers (r5 UTF-8 autodetect) }
+
+// r5: strict scalar-valid UTF-8 byte-pattern probe used by translatable inline
+// string reads to repair systematic CP-1252-mojibake on community CN/JP/RU/KR
+// translations that ship raw UTF-8 bytes inline. Returns True only when the
+// input is well-formed UTF-8 by RFC 3629, contains at least one non-ASCII byte,
+// and survives the additional safety heuristics:
+//
+//   - Pure ASCII (every byte < $80) -> False so the caller falls through to the
+//     existing CP-1252 path. ASCII is identical under both encodings, so the
+//     decoded result would be the same; bypassing the autodetect on legacy
+//     English mods preserves byte-for-byte behavior on the dominant content.
+//   - Leading UTF-8 BOM (EF BB BF) is accepted and stripped silently.
+//   - Overlong sequences are rejected by tightening first-tail ranges beyond
+//     the bare lead-byte class (E0 -> A0..BF, F0 -> 90..BF, F4 -> 80..8F).
+//   - Surrogate codepoints U+D800..U+DFFF are rejected (ED first-tail 80..9F).
+//   - C1 control codepoints U+0080..U+009F are rejected at the boundary
+//     because real translatable text never contains them but adjacent CP-1252
+//     bytes (C2 + 80..9F = smart quotes / euro) coincidentally satisfy strict
+//     UTF-8 framing. This is the highest-likelihood false-positive class.
+//   - Unicode noncharacters U+FDD0..U+FDEF and U+xxFFFE/U+xxFFFF are rejected.
+//
+// Override-wins is enforced by the caller (TwbStringDef.ToStringNative): when
+// .cpoverride or SNAM <cp:XXXX> declared an explicit encoding the autodetect
+// is skipped entirely so explicit user intent wins regardless of byte content.
+function TryDecodeUtf8(const aBytes: TBytes; out aDecoded: string): Boolean;
+var
+  Len, i: Integer;
+  HasNonAscii: Boolean;
+  StartIdx: Integer;
+  b0, b1, b2, b3: Byte;
+  Cp: Cardinal;
+begin
+  Result := False;
+  aDecoded := '';
+  Len := Length(aBytes);
+  if Len = 0 then begin
+    Result := True;
+    Exit;
+  end;
+
+  StartIdx := 0;
+  if (Len >= 3) and (aBytes[0] = $EF) and (aBytes[1] = $BB) and (aBytes[2] = $BF) then
+    StartIdx := 3;
+
+  i := StartIdx;
+  // A leading BOM is itself non-ASCII-class signal: BOM + ASCII payload must
+  // still take the UTF-8 path so the stripped result is the bare ASCII string.
+  // Without this initialization a BOM+ASCII input would falsely fall through to
+  // CP-1252 and render the BOM bytes as 'ï»¿' before the ASCII payload.
+  HasNonAscii := StartIdx > 0;
+
+  while i < Len do begin
+    b0 := aBytes[i];
+    if b0 < $80 then begin
+      Inc(i);
+      Continue;
+    end;
+    HasNonAscii := True;
+    case b0 of
+      $C2..$DF: begin
+        // 2-byte sequence: encodes U+0080..U+07FF.
+        if i + 1 >= Len then Exit;
+        b1 := aBytes[i + 1];
+        if (b1 < $80) or (b1 > $BF) then Exit;
+        Cp := ((Cardinal(b0) and $1F) shl 6) or (Cardinal(b1) and $3F);
+        // r5 heuristic: reject C1 control codepoints. This kills the
+        // common CP-1252 false-positive class (smart quotes, euro, etc.
+        // preceded by an accented capital that happens to be a valid lead).
+        if (Cp >= $0080) and (Cp <= $009F) then Exit;
+        Inc(i, 2);
+      end;
+      $E0: begin
+        // 3-byte sequence with overlong guard: first tail must be A0..BF.
+        if i + 2 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2];
+        if (b1 < $A0) or (b1 > $BF) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        Inc(i, 3);
+      end;
+      $E1..$EC, $EE..$EF: begin
+        if i + 2 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2];
+        if (b1 < $80) or (b1 > $BF) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        Cp := ((Cardinal(b0) and $0F) shl 12)
+           or ((Cardinal(b1) and $3F) shl 6)
+           or  (Cardinal(b2) and $3F);
+        // r5 heuristic: reject Unicode noncharacters U+FDD0..U+FDEF and
+        // any U+xxFFFE/U+xxFFFF in the BMP - they have no place in
+        // translatable plugin text but a stray CP-1252 byte run can
+        // coincidentally form one.
+        if (Cp >= $FDD0) and (Cp <= $FDEF) then Exit;
+        if (Cp and $FFFE) = $FFFE then Exit;
+        Inc(i, 3);
+      end;
+      $ED: begin
+        // 3-byte sequence with surrogate guard: first tail must be 80..9F.
+        if i + 2 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2];
+        if (b1 < $80) or (b1 > $9F) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        Inc(i, 3);
+      end;
+      $F0: begin
+        // 4-byte sequence with overlong guard: first tail must be 90..BF.
+        if i + 3 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2]; b3 := aBytes[i + 3];
+        if (b1 < $90) or (b1 > $BF) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        if (b3 < $80) or (b3 > $BF) then Exit;
+        Cp := ((Cardinal(b0) and $07) shl 18)
+           or ((Cardinal(b1) and $3F) shl 12)
+           or ((Cardinal(b2) and $3F) shl 6)
+           or  (Cardinal(b3) and $3F);
+        // r5: reject supplementary-plane noncharacters U+xxFFFE / U+xxFFFF for
+        // every plane the 4-byte path can encode (1..16). Same heuristic as
+        // the 3-byte path's BMP noncharacter check.
+        if (Cp and $FFFE) = $FFFE then Exit;
+        Inc(i, 4);
+      end;
+      $F1..$F3: begin
+        if i + 3 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2]; b3 := aBytes[i + 3];
+        if (b1 < $80) or (b1 > $BF) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        if (b3 < $80) or (b3 > $BF) then Exit;
+        Cp := ((Cardinal(b0) and $07) shl 18)
+           or ((Cardinal(b1) and $3F) shl 12)
+           or ((Cardinal(b2) and $3F) shl 6)
+           or  (Cardinal(b3) and $3F);
+        if (Cp and $FFFE) = $FFFE then Exit;
+        Inc(i, 4);
+      end;
+      $F4: begin
+        // 4-byte sequence with U+10FFFF cap: first tail must be 80..8F.
+        if i + 3 >= Len then Exit;
+        b1 := aBytes[i + 1]; b2 := aBytes[i + 2]; b3 := aBytes[i + 3];
+        if (b1 < $80) or (b1 > $8F) then Exit;
+        if (b2 < $80) or (b2 > $BF) then Exit;
+        if (b3 < $80) or (b3 > $BF) then Exit;
+        Cp := ((Cardinal(b0) and $07) shl 18)
+           or ((Cardinal(b1) and $3F) shl 12)
+           or ((Cardinal(b2) and $3F) shl 6)
+           or  (Cardinal(b3) and $3F);
+        if (Cp and $FFFE) = $FFFE then Exit;
+        Inc(i, 4);
+      end;
+    else
+      // Any other byte with the high bit set (including isolated continuation
+      // bytes 80..BF, the disallowed leads C0/C1, and 5+-byte/invalid leads
+      // F5..FF) is not a valid UTF-8 lead.
+      Exit;
+    end;
+  end;
+
+  // r5: pure ASCII bypasses the autodetect so legacy English mods walk the
+  // exact same CP-1252 code path they always did. The decoded result is the
+  // same byte-for-byte, but this preserves call-site behavior identity.
+  if not HasNonAscii then Exit;
+
+  try
+    if StartIdx > 0 then
+      aDecoded := TEncoding.UTF8.GetString(aBytes, StartIdx, Len - StartIdx)
+    else
+      aDecoded := TEncoding.UTF8.GetString(aBytes);
+    Result := True;
+  except
+    Result := False;
+    aDecoded := '';
+  end;
+end;
+
 { TwbStringDef }
 
 procedure TwbStringDef.AfterClone(const aSource: TwbDef);
@@ -16522,9 +16705,29 @@ begin
   if Len > 0 then begin
     b := BytesOf(aBasePtr, Len);
     try
-      Result := bsdGetEncoding(aElement).GetString(b);
-      if aTransformType = ttCheck then
-        Result := '';
+      // r5 UTF-8 inline autodetect for translatable fields (FULL/DESC/BOOK
+      // text/MESG text/...). Skipped when:
+      //   - the def has its own encoding override (per-def bsdEncodingOverride);
+      //   - the file has an explicit per-file override (.cpoverride sidecar
+      //     or header SNAM <cp:XXXX>) - latched on IwbFile so explicit 1252
+      //     still suppresses autodetect, not inferred from encoding identity.
+      // Non-translatable fields (EditorID, signatures, FormID labels) are
+      // intentionally excluded - they have stable byte contracts and stay on
+      // the existing CP-1252 read path. See TryDecodeUtf8 for defense-layer
+      // detail (RFC 3629 strict + overlong/surrogate/noncharacter/C1-control
+      // rejection + ASCII bypass + BOM strip).
+      if (dfTranslatable in defFlags)
+         and not Assigned(bsdEncodingOverride)
+         and not (Assigned(aElement) and Assigned(aElement._File)
+                  and aElement._File.HasExplicitEncodingOverride)
+         and TryDecodeUtf8(b, Result) then begin
+        if aTransformType = ttCheck then
+          Result := '';
+      end else begin
+        Result := bsdGetEncoding(aElement).GetString(b);
+        if aTransformType = ttCheck then
+          Result := '';
+      end;
       {
       i := Length(Result);
       j := i;
