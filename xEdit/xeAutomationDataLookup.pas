@@ -11,6 +11,7 @@ unit xeAutomationDataLookup;
 interface
 
 uses
+  System.RegularExpressions,
   wbInterface,
   wbLoadOrder,
   JsonDataObjects,
@@ -41,6 +42,19 @@ type
     FullNamePattern: string;
     BaseEditorIDPattern: string;
     BaseDisplayNamePattern: string;
+    ParentFormID: Cardinal;
+    HasParentFormID: Boolean;
+    EditorIDRegex: TRegEx;
+    HasEditorIDRegex: Boolean;
+    DisplayNameRegex: TRegEx;
+    HasDisplayNameRegex: Boolean;
+    FullNameRegex: TRegEx;
+    HasFullNameRegex: Boolean;
+    BaseEditorIDRegex: TRegEx;
+    HasBaseEditorIDRegex: Boolean;
+    BaseDisplayNameRegex: TRegEx;
+    HasBaseDisplayNameRegex: Boolean;
+    RegexTimeouts: Integer;
     BaseFormID: TwbFormID;
     HasBaseFormID: Boolean;
     HasIsMaster: Boolean;
@@ -195,6 +209,56 @@ begin
   // JCL globbing is case-sensitive, so normalize both sides once here and keep the
   // later filter commands on one shared case-insensitive wildcard contract.
   Result := StrMatches(UpperCase(APattern), UpperCase(AValue));
+end;
+
+function xeAutomationInvalidFieldRequest(const AMessage, AInvalidField: string): ExeAutomationError;
+var
+  lDetails: TJsonObject;
+begin
+  lDetails := TJsonObject.Create;
+  try
+    lDetails.S['invalidField'] := AInvalidField;
+    Result := xeAutomationNewError(xeAutomationErrorInvalidRequest, AMessage, lDetails);
+  finally
+    lDetails.Free;
+  end;
+end;
+
+procedure xeAutomationRejectPatternRegexConflict(const APatternField, ARegexField: string);
+begin
+  raise xeAutomationInvalidFieldRequest(
+    Format('Automation records.apply_filter must specify only one of %s or %s per identifier', [APatternField, ARegexField]),
+    ARegexField
+  );
+end;
+
+function xeAutomationReadRegexFilterArg(const AArgs: TJsonObject; const AName: string; out AHasRegex: Boolean): TRegEx;
+var
+  lPattern: string;
+begin
+  AHasRegex := False;
+  lPattern := xeAutomationReadStringArg(AArgs, AName);
+  if lPattern = '' then
+    Exit;
+
+  try
+    Result := TRegEx.Create(lPattern, [roIgnoreCase, roCompiled]);
+    AHasRegex := True;
+  except
+    on E: Exception do
+      // Regex syntax errors are request-boundary failures. Preserve the offending
+      // field name in details so clients can highlight the exact input that failed.
+      raise xeAutomationInvalidFieldRequest(
+        Format('Automation arg "%s" is not a valid regular expression: %s', [AName, E.Message]),
+        AName
+      );
+  end;
+end;
+
+procedure xeAutomationValidatePatternRegexPair(const AArgs: TJsonObject; const APatternField, ARegexField: string);
+begin
+  if (xeAutomationReadStringArg(AArgs, APatternField) <> '') and (xeAutomationReadStringArg(AArgs, ARegexField) <> '') then
+    xeAutomationRejectPatternRegexConflict(APatternField, ARegexField);
 end;
 
 function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string): TxeAutomationMainRecordSearch;
@@ -449,6 +513,22 @@ begin
   Result.FullNamePattern := xeAutomationReadStringArg(AArgs, 'fullNamePattern');
   Result.BaseEditorIDPattern := xeAutomationReadStringArg(AArgs, 'baseEditorIdPattern');
   Result.BaseDisplayNamePattern := xeAutomationReadStringArg(AArgs, 'baseDisplayNamePattern');
+
+  xeAutomationValidatePatternRegexPair(AArgs, 'editorIdPattern', 'editorIdRegex');
+  xeAutomationValidatePatternRegexPair(AArgs, 'displayNamePattern', 'displayNameRegex');
+  xeAutomationValidatePatternRegexPair(AArgs, 'fullNamePattern', 'fullNameRegex');
+  xeAutomationValidatePatternRegexPair(AArgs, 'baseEditorIdPattern', 'baseEditorIdRegex');
+  xeAutomationValidatePatternRegexPair(AArgs, 'baseDisplayNamePattern', 'baseDisplayNameRegex');
+
+  Result.EditorIDRegex := xeAutomationReadRegexFilterArg(AArgs, 'editorIdRegex', Result.HasEditorIDRegex);
+  Result.DisplayNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'displayNameRegex', Result.HasDisplayNameRegex);
+  Result.FullNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'fullNameRegex', Result.HasFullNameRegex);
+  Result.BaseEditorIDRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseEditorIdRegex', Result.HasBaseEditorIDRegex);
+  Result.BaseDisplayNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseDisplayNameRegex', Result.HasBaseDisplayNameRegex);
+
+  Result.HasParentFormID := xeAutomationArgPresent(AArgs, 'parentFormId');
+  if Result.HasParentFormID then
+    Result.ParentFormID := xeAutomationParseFormIdHex(xeAutomationRequireStringArg(AArgs, 'parentFormId'));
 
   // Parse the public filter contract once at the request boundary so record scans can
   // stay focused on matching real record state instead of repeating validation logic.
