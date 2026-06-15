@@ -156,6 +156,7 @@ function xeAutomationNewChildGroupStub(
   const ASynthPath: string): TJsonObject;
 var
   lContainer: IwbContainer;
+  lChildElement: IwbElement;
   lChildRecord: IwbMainRecord;
   lSeen: TStringList;
   lSignatures: TJsonArray;
@@ -187,12 +188,17 @@ begin
     try
       lSeen.Sorted := True;
       lSeen.Duplicates := dupIgnore;
-      for i := 0 to Pred(lContainer.ElementCount) do
-        if Supports(lContainer.Elements[i], IwbMainRecord, lChildRecord) then begin
+      for i := 0 to Pred(lContainer.ElementCount) do begin
+        lChildElement := lContainer.Elements[i];
+        if not Assigned(lChildElement) then
+          Continue;
+
+        if Supports(lChildElement, IwbMainRecord, lChildRecord) and Assigned(lChildRecord) then begin
           lSig := string(lChildRecord.Signature);
-          if lSeen.IndexOf(lSig) < 0 then
+          if lSig <> '' then
             lSeen.Add(lSig);
         end;
+      end;
 
       if lSeen.Count > 0 then begin
         lSignatures := Result.O['object'].A['signatures'];
@@ -332,6 +338,7 @@ var
   lChildGroup: IwbGroupRecord;
   lChildSynthPath: string;
   lMain: IwbMainRecord;
+  lParentIsChildGroup: Boolean;
   lParentGroup: IwbGroupRecord;
   lParentSynthPath: string;
   lStub: TJsonObject;
@@ -348,22 +355,30 @@ begin
   lChildren := Result.A['children'];
   if not Supports(lElement, IwbContainer, lContainer) then
     Exit;
+  lParentIsChildGroup := (lParentSynthPath <> '') and Supports(lElement, IwbGroupRecord, lParentGroup);
 
   // This command intentionally emits only one generation of child stubs. Callers
   // must opt into deeper traversal by following returned child locators explicitly.
   for i := 0 to Pred(lContainer.ElementCount) do begin
     lChild := lContainer.Elements[i];
-    if (lParentSynthPath <> '') and Supports(lElement, IwbGroupRecord, lParentGroup) and
-       Supports(lChild, IwbGroupRecord, lChildGroup) then begin
+    if not Assigned(lChild) then
+      Continue;
+
+    // Some main records exposed from terminal GRUPs also satisfy group-flavored
+    // interfaces. Prefer the flat MainRecord locator first so terminal ChildGroup
+    // walks never reinterpret real records as synthetic nested GRUP breadcrumbs.
+    if Supports(lChild, IwbMainRecord, lMain) and Assigned(lMain) then
+      lChildren.Add(xeAutomationNewMainRecordElementResponse(lMain))
+    else if lParentIsChildGroup and Supports(lChild, IwbGroupRecord, lChildGroup) and Assigned(lChildGroup) then begin
       if xeAutomationSuppressContextualChildGroup(lParentGroup, lChildGroup) then
         Continue;
       lChildSynthPath := lParentSynthPath + '\' + xeAutomationChildGroupSynthLabel(lParentGroup, lChildGroup);
+      if lChildSynthPath = lParentSynthPath + '\' then
+        Continue;
       lStub := xeAutomationNewChildGroupStub(lRecord, lChildGroup, lChildSynthPath);
       if Assigned(lStub) then
         lChildren.Add(lStub);
-    end else if Supports(lChild, IwbMainRecord, lMain) then
-      lChildren.Add(xeAutomationNewMainRecordElementResponse(lMain))
-    else
+    end else
       lChildren.Add(xeAutomationNewElementResponse(lRecord, lChild));
   end;
 

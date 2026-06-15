@@ -36,7 +36,10 @@ uses
   xeAutomationTransportPipe;
 
 const
-  xeAutomationServeBufferSize = 64 * 1024;
+  // ChildGroup element walks can legitimately return hundreds of flat record
+  // stubs. Keep the message-pipe buffer above those response sizes so large
+  // read-only enumerations do not get misreported as broken-pipe daemon failures.
+  xeAutomationServeBufferSize = 4 * 1024 * 1024;
 
 var
   xeAutomationServeActive: Boolean;
