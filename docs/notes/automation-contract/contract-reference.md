@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.14`, captured in the Phase 15B accepted capability snapshot.
+- Current `contractVersion`: `0.15`, captured in the Phase 15C accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -308,6 +308,69 @@ Expected success shape is unchanged except for the optional timeout metadata:
   }
 }
 ```
+
+## references recursive descent (0.15)
+
+Phase 15C extends `records.references` with one optional argument:
+
+- `recursive` (boolean, default `false`): when omitted or false, the command keeps
+  the pre-0.15 shallow behavior and scans only the addressed record's own element
+  tree. When true and the addressed record has a populated ChildGroup, xEdit walks
+  ChildGroup-owned records with `wbGetSiblingRecords`, collects each child
+  record's outgoing references, and unions them with the parent record's own hits.
+
+The `supports.referencesRecursive` block advertises:
+
+- `defaultRecursive: false`
+- `appliesTo: ["CELL", "WRLD", "DIAL", "QUST"]`
+- `dedupBy: "loadOrderFormId"`
+- `limitSemantics: "post-union-post-dedup"`
+
+Limit semantics are aggregate: deduplication happens across the parent and all
+descended child-record hits, then the existing `limit` cap is applied to the final
+`hits` array. Supplying `recursive:true` for a record with no populated ChildGroup
+is a silent no-op and returns the same shape as `recursive:false`.
+
+Example:
+
+```json
+{
+  "command": "records.references",
+  "args": {
+    "file": "Fallout4.esm",
+    "formId": "00000025",
+    "path": "",
+    "recursive": true,
+    "limit": 100
+  }
+}
+```
+
+The success envelope remains `{ "truncated": bool, "hits": [...], "count": n }`.
+
+## conflict_status ChildGroup (0.15)
+
+Phase 15C adds an optional `result.childGroup` sub-block to
+`records.conflict_status`. It is omitted entirely when the addressed record has no
+ChildGroup or when the ChildGroup is empty.
+
+When present, the block contains:
+
+- `count`: number of ChildGroup-owned child main records included in the scan.
+- `hasConflict`: true when any scanned child record reports a non-peaceful xEdit
+  conflict state.
+- `signatures`: object keyed by child record signature. Each value has `total`
+  and `conflicting` counts.
+- `conflictingHits`: capped array of shallow record stubs for conflicting child
+  records. Entries reuse the normal record summary/locator shape and include a
+  shallow `conflict` object.
+- `conflictingHitsTruncated`: true when more than 20 conflicting child records
+  were found.
+
+The `supports.conflictStatusChildGroup` block advertises the sub-block key, field
+names, omission rule, and `conflictingHitsMax: 20`. Existing main-record
+`record`, `conflict`, and `children` fields are unchanged; clients that ignore the
+new key keep pre-0.15 behavior.
 
 ## Save / durability semantics
 

@@ -139,11 +139,13 @@ var
   lChildGroupNavigation: TJsonObject;
   lApplyFilterExtensions: TJsonObject;
   lApplyFilterRegex: TJsonObject;
+  lReferencesRecursive: TJsonObject;
+  lConflictStatusChildGroup: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15B (0.13 -> 0.14): additive records.apply_filter extensions for
-  // parent-scope and regex matching. Earlier supports blocks remain stable.
-  Result.S['contractVersion'] := '0.14';
+  // Phase 15C (0.14 -> 0.15): additive ChildGroup-aware relationship collectors.
+  // Earlier supports blocks remain stable for older clients that ignore new keys.
+  Result.S['contractVersion'] := '0.15';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -354,6 +356,33 @@ begin
   lApplyFilterRegex.B['caseSensitive'] := False;
   lApplyFilterRegex.S['combinedWithPattern'] := 'rejected';
   lApplyFilterExtensions.S['regexTimeoutsField'] := 'result.regexTimeouts';
+
+  // records.references recursion is opt-in so legacy relationship lookups stay
+  // shallow unless a caller explicitly asks to union ChildGroup-owned records.
+  lReferencesRecursive := Result.O['supports'].O['referencesRecursive'];
+  lReferencesRecursive.B['defaultRecursive'] := False;
+  with lReferencesRecursive.A['appliesTo'] do begin
+    Add('CELL');
+    Add('WRLD');
+    Add('DIAL');
+    Add('QUST');
+  end;
+  lReferencesRecursive.S['dedupBy'] := 'loadOrderFormId';
+  lReferencesRecursive.S['limitSemantics'] := 'post-union-post-dedup';
+
+  // records.conflict_status now surfaces aggregate conflict signal from the
+  // existing ChildGroup seam without changing the main record conflict block.
+  lConflictStatusChildGroup := Result.O['supports'].O['conflictStatusChildGroup'];
+  lConflictStatusChildGroup.S['subBlockKey'] := 'childGroup';
+  with lConflictStatusChildGroup.A['fields'] do begin
+    Add('count');
+    Add('hasConflict');
+    Add('signatures');
+    Add('conflictingHits');
+    Add('conflictingHitsTruncated');
+  end;
+  lConflictStatusChildGroup.I['conflictingHitsMax'] := 20;
+  lConflictStatusChildGroup.S['omittedWhen'] := 'no-child-group-or-empty-child-group';
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
