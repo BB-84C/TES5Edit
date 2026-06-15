@@ -257,6 +257,42 @@ begin
   xeAutomationWriteRecordSummary(Result.O['object'], ARecord);
 end;
 
+procedure xeAutomationAppendChildGroupConflictSubBlock(const AResult: TJsonObject;
+  const ASnapshot: TxeAutomationConflictSnapshot);
+var
+  lChildGroup: TJsonObject;
+  lSignatures: TJsonObject;
+  lHits: TJsonArray;
+  lHit: TJsonObject;
+  i: Integer;
+begin
+  if not ASnapshot.ChildGroup.Present then
+    Exit;
+
+  lChildGroup := AResult.O['childGroup'];
+  lChildGroup.I['count'] := ASnapshot.ChildGroup.Count;
+  lChildGroup.B['hasConflict'] := ASnapshot.ChildGroup.HasConflict;
+  lChildGroup.B['conflictingHitsTruncated'] := ASnapshot.ChildGroup.ConflictingHitsTruncated;
+
+  lSignatures := lChildGroup.O['signatures'];
+  for i := Low(ASnapshot.ChildGroup.Signatures) to High(ASnapshot.ChildGroup.Signatures) do begin
+    lSignatures.O[ASnapshot.ChildGroup.Signatures[i].Signature].I['total'] := ASnapshot.ChildGroup.Signatures[i].Total;
+    lSignatures.O[ASnapshot.ChildGroup.Signatures[i].Signature].I['conflicting'] := ASnapshot.ChildGroup.Signatures[i].Conflicting;
+  end;
+
+  lHits := lChildGroup.A['conflictingHits'];
+  for i := Low(ASnapshot.ChildGroup.ConflictingHits) to High(ASnapshot.ChildGroup.ConflictingHits) do begin
+    lHit := xeAutomationNewListedRecordSummary(ASnapshot.ChildGroup.ConflictingHits[i].RecordRef);
+    xeAutomationWriteConflictBlock(
+      lHit.O['conflict'],
+      ASnapshot.ChildGroup.ConflictingHits[i].ConflictAll,
+      ASnapshot.ChildGroup.ConflictingHits[i].ConflictThis,
+      nil
+    );
+    lHits.Add(lHit);
+  end;
+end;
+
 function xeAutomationNewRecordConflictStatusResponse(const ARecord: IwbMainRecord;
   const ASnapshot: TxeAutomationConflictSnapshot): TJsonObject;
 var
@@ -278,6 +314,10 @@ begin
   lChildren := Result.O['children'].A['items'];
   for i := Low(ASnapshot.Children) to High(ASnapshot.Children) do
     xeAutomationWriteConflictChildStub(lChildren.AddObject, ARecord, ASnapshot.Children[i]);
+
+  // ChildGroup conflict signal is an additive read-only block; records without a
+  // populated ChildGroup omit it entirely so pre-15C clients keep their old shape.
+  xeAutomationAppendChildGroupConflictSubBlock(Result, ASnapshot);
 end;
 
 function xeAutomationRequireRootRecord(const AArgs: TJsonObject): IwbMainRecord;

@@ -32,6 +32,31 @@ type
 
   TxeAutomationConflictChildSnapshots = array of TxeAutomationConflictChildSnapshot;
 
+  TxeAutomationConflictChildGroupSignature = record
+    Signature: string;
+    Total: Integer;
+    Conflicting: Integer;
+  end;
+
+  TxeAutomationConflictChildGroupSignatures = array of TxeAutomationConflictChildGroupSignature;
+
+  TxeAutomationConflictChildGroupHit = record
+    RecordRef: IwbMainRecord;
+    ConflictAll: TConflictAll;
+    ConflictThis: TConflictThis;
+  end;
+
+  TxeAutomationConflictChildGroupHits = array of TxeAutomationConflictChildGroupHit;
+
+  TxeAutomationConflictChildGroupSnapshot = record
+    Present: Boolean;
+    Count: Integer;
+    HasConflict: Boolean;
+    Signatures: TxeAutomationConflictChildGroupSignatures;
+    ConflictingHits: TxeAutomationConflictChildGroupHits;
+    ConflictingHitsTruncated: Boolean;
+  end;
+
   TxeAutomationConflictSnapshot = record
     Element: IwbElement;
     ConflictAll: TConflictAll;
@@ -39,6 +64,7 @@ type
     Participants: TxeAutomationConflictParticipants;
     Children: TxeAutomationConflictChildSnapshots;
     ChildrenTruncated: Boolean;
+    ChildGroup: TxeAutomationConflictChildGroupSnapshot;
   end;
 
 function xeAutomationSnapshotRecordConflict(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationConflictSnapshot;
@@ -49,7 +75,11 @@ implementation
 uses
   SysUtils,
   VirtualTrees,
+  wbHelpers,
   xeMainForm;
+
+const
+  xeAutomationChildGroupConflictSignatures = 'REFR,ACHR,PGRE,PHZD,PARW,PBAR,PBEA,PCON,PFLA,PMIS,LAND,NAVM,PGRD,INFO,DLBR,SCEN,CELL,DIAL,QUST,WRLD';
 
 type
   TxeAutomationParticipantFileRefs = array of IwbFile;
@@ -327,6 +357,86 @@ begin
   end;
 end;
 
+function xeAutomationFindChildGroupSignatureIndex(const ASignatures: TxeAutomationConflictChildGroupSignatures;
+  const ASignature: string): Integer;
+var
+  i: Integer;
+begin
+  for i := Low(ASignatures) to High(ASignatures) do
+    if SameText(ASignatures[i].Signature, ASignature) then
+      Exit(i);
+  Result := -1;
+end;
+
+procedure xeAutomationAddChildGroupSignature(var AChildGroup: TxeAutomationConflictChildGroupSnapshot;
+  const ASignature: string; const AConflicting: Boolean);
+var
+  lIndex: Integer;
+begin
+  lIndex := xeAutomationFindChildGroupSignatureIndex(AChildGroup.Signatures, ASignature);
+  if lIndex < 0 then begin
+    SetLength(AChildGroup.Signatures, Length(AChildGroup.Signatures) + 1);
+    lIndex := High(AChildGroup.Signatures);
+    AChildGroup.Signatures[lIndex].Signature := ASignature;
+  end;
+
+  Inc(AChildGroup.Signatures[lIndex].Total);
+  if AConflicting then
+    Inc(AChildGroup.Signatures[lIndex].Conflicting);
+end;
+
+procedure xeAutomationAppendChildGroupConflictHit(var AChildGroup: TxeAutomationConflictChildGroupSnapshot;
+  const ARecord: IwbMainRecord; const AConflictAll: TConflictAll; const AConflictThis: TConflictThis;
+  const ALimit: Integer);
+var
+  lIndex: Integer;
+begin
+  if Length(AChildGroup.ConflictingHits) >= ALimit then begin
+    AChildGroup.ConflictingHitsTruncated := True;
+    Exit;
+  end;
+
+  SetLength(AChildGroup.ConflictingHits, Length(AChildGroup.ConflictingHits) + 1);
+  lIndex := High(AChildGroup.ConflictingHits);
+  AChildGroup.ConflictingHits[lIndex].RecordRef := ARecord;
+  AChildGroup.ConflictingHits[lIndex].ConflictAll := AConflictAll;
+  AChildGroup.ConflictingHits[lIndex].ConflictThis := AConflictThis;
+end;
+
+function xeAutomationSnapshotChildGroupConflict(const ARecord: IwbMainRecord): TxeAutomationConflictChildGroupSnapshot;
+var
+  lAccess: TfrmMainAccess;
+  lChildren: TDynMainRecords;
+  lConflictAll: TConflictAll;
+  lConflictThis: TConflictThis;
+  lConflicting: Boolean;
+  i: Integer;
+begin
+  FillChar(Result, SizeOf(Result), 0);
+  if not Assigned(ARecord.ChildGroup) or (ARecord.ChildGroup.ElementCount = 0) then
+    Exit;
+
+  lChildren := wbGetSiblingRecords(ARecord, wbStringToSignatures(xeAutomationChildGroupConflictSignatures), True);
+  if Length(lChildren) = 0 then
+    Exit;
+
+  Result.Present := True;
+  Result.Count := Length(lChildren);
+  lAccess := xeAutomationMainFormAccess;
+
+  for i := Low(lChildren) to High(lChildren) do begin
+    lAccess.ConflictLevelForMainRecord(lChildren[i], lConflictAll, lConflictThis);
+    lConflicting := lConflictAll > caNoConflict;
+    xeAutomationAddChildGroupSignature(Result, lChildren[i].Signature, lConflicting);
+
+    if not lConflicting then
+      Continue;
+
+    Result.HasConflict := True;
+    xeAutomationAppendChildGroupConflictHit(Result, lChildren[i], lConflictAll, lConflictThis, 20);
+  end;
+end;
+
 function xeAutomationSnapshotRecordConflict(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationConflictSnapshot;
 var
   lAccess: TfrmMainAccess;
@@ -354,6 +464,7 @@ begin
     ALimit,
     Result.ChildrenTruncated
   );
+  Result.ChildGroup := xeAutomationSnapshotChildGroupConflict(ARecord);
 end;
 
 function xeAutomationSnapshotElementConflict(const AElement: IwbElement; const ALimit: Integer): TxeAutomationConflictSnapshot;
