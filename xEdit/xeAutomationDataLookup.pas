@@ -261,6 +261,33 @@ begin
     xeAutomationRejectPatternRegexConflict(APatternField, ARegexField);
 end;
 
+function xeAutomationRecordHasAncestor(const ARecord: IwbMainRecord; const AParentFormID: Cardinal): Boolean;
+var
+  lContainer: IwbContainer;
+  lAncestor: IwbMainRecord;
+  lGroup: IwbGroupRecord;
+begin
+  Result := False;
+  if not Assigned(ARecord) then
+    Exit;
+
+  // ChildGroup-contained records are already in the flat file index; the parent
+  // predicate must therefore walk the real xEdit container chain rather than rely
+  // on record-list ordering or synthetic ChildGroup path text.
+  lContainer := ARecord.Container;
+  while Assigned(lContainer) do begin
+    if Supports(lContainer, IwbMainRecord, lAncestor) then
+      if lAncestor.LoadOrderFormID.ToCardinal = AParentFormID then
+        Exit(True);
+    if Supports(lContainer, IwbGroupRecord, lGroup) then begin
+      lAncestor := lGroup.ChildrenOf;
+      if Assigned(lAncestor) and (lAncestor.LoadOrderFormID.ToCardinal = AParentFormID) then
+        Exit(True);
+    end;
+    lContainer := lContainer.Container;
+  end;
+end;
+
 function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; const AFileName: string): TxeAutomationMainRecordSearch;
 var
   lParsedFormID: TwbFormID;
@@ -554,6 +581,8 @@ begin
     Exit;
 
   if (Length(AFilter.Signatures) > 0) and not xeAutomationSignatureInSet(ARecord.Signature, AFilter.Signatures) then
+    Exit;
+  if AFilter.HasParentFormID and not xeAutomationRecordHasAncestor(ARecord, AFilter.ParentFormID) then
     Exit;
   if (AFilter.EditorIDPattern <> '') and ((not ARecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(ARecord.EditorID, AFilter.EditorIDPattern)) then
     Exit;
