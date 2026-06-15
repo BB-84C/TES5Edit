@@ -136,12 +136,12 @@ var
   lCommandName: string;
   lJobKind: string;
   lScripts: TJsonObject;
+  lChildGroupNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // r5 (0.11 -> 0.12): additive supports.stringDecoding surface advertises the
-  // r5 inline UTF-8 autodetect for translatable fields plus the existing
-  // -cp / -cp-trans / -cp-general startup flags. No frozen surface changes.
-  Result.S['contractVersion'] := '0.12';
+  // Phase 15A (0.12 -> 0.13): additive ChildGroup navigation capability
+  // advertises the reserved locator prefix and supported parent signatures.
+  Result.S['contractVersion'] := '0.13';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -297,6 +297,41 @@ begin
   Result.O['supports'].O['elementsMutation'].S['mutationPolicy']  := 'native-xedit-predicates';
   Result.O['supports'].O['elementsMutation'].B['consentRequired'] := True;
   Result.O['supports'].O['elementsMutation'].B['iKnowWhatImDoing'] := wbIKnowWhatImDoing;
+
+  // Phase 15A exposes ChildGroup traversal as read-only locator metadata; no
+  // mutation verbs are implied by this capability block.
+  lChildGroupNavigation := Result.O['supports'].O['childGroupNavigation'];
+  lChildGroupNavigation.S['prefix'] := '\Child Group';
+  lChildGroupNavigation.B['recordLocatorReentry'] := True;
+  with lChildGroupNavigation.A['parents'] do begin
+    Add('CELL');
+    Add('WRLD');
+    Add('DIAL');
+    Add('QUST');
+  end;
+  lChildGroupNavigation.S['questAvailableWhen'] := 'wbVWDAsQuestChildren';
+  with lChildGroupNavigation.O['subLabels'].A['CELL'] do begin
+    Add('Persistent');
+    Add('Temporary');
+    Add('Visible when Distant');
+  end;
+  with lChildGroupNavigation.O['subLabels'].A['WRLD'] do begin
+    Add('Persistent');
+    Add('Block <N>,<N>');
+    Add('Block <N>,<N>\Sub-Block <M>,<M>');
+  end;
+  with lChildGroupNavigation.O['groupTypes'] do begin
+    I['WRLD-ChildGroup'] := 1;
+    I['Block'] := 4;
+    I['Sub-Block'] := 5;
+    I['CELL-ChildGroup'] := 6;
+    I['DIAL-ChildGroup'] := 7;
+    I['CELL-Persistent'] := 8;
+    I['CELL-Temporary'] := 9;
+    I['CELL-VWD'] := 10;
+    I['QUST-ChildGroup'] := 10;
+  end;
+  lChildGroupNavigation.S['objectKind'] := 'child_group';
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
