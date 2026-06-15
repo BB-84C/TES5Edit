@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.15`, captured in the Phase 15C accepted capability snapshot.
+- Current `contractVersion`: `0.16`, captured in the Phase 15D accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -371,6 +371,76 @@ The `supports.conflictStatusChildGroup` block advertises the sub-block key, fiel
 names, omission rule, and `conflictingHitsMax: 20`. Existing main-record
 `record`, `conflict`, and `children` fields are unchanged; clients that ignore the
 new key keep pre-0.15 behavior.
+
+## records.create parent-spec (0.16)
+
+Phase 15D extends `records.create` with an optional `parent` object for authoring
+new records into ChildGroup-owning parents without introducing a new verb.
+
+### Request shape
+
+Existing top-level creation remains valid:
+
+```json
+{
+  "command": "records.create",
+  "args": {
+    "targetFile": "patch.esp",
+    "signature": "KYWD"
+  }
+}
+```
+
+Parent-spec creation adds:
+
+```json
+{
+  "command": "records.create",
+  "args": {
+    "targetFile": "patch.esp",
+    "signature": "REFR",
+    "parent": {
+      "file": "patch.esp",
+      "formId": "00000025",
+      "subGroup": "Temporary"
+    }
+  }
+}
+```
+
+`parent.file` and `parent.formId` address the parent main record. For writable
+patch authoring, use a parent record owned by `targetFile` (for example, copy the
+CELL/DIAL/QUST override first), then create the child record under that parent.
+
+### Supported parents
+
+| Parent | Child target | `subGroup` |
+|---|---|---|
+| `CELL` | Cell ChildGroup sub-GRUP | Optional: `Persistent`, `Temporary`, `Visible when Distant` |
+| `DIAL` | DIAL ChildGroup | Not allowed |
+| `QUST` | QUST ChildGroup | Not allowed |
+
+When `CELL.subGroup` is omitted, default selection is:
+
+- `REFR`, `ACHR`, `PGRD`, `LAND`, `NAVM` -> `Temporary`
+- all other signatures -> `Persistent`
+
+`WRLD` is intentionally deferred because exterior Block/Sub-Block resolution needs
+a richer parent spec. WRLD parent requests return `invalid_request` with
+`error.details.unsupportedParent: "WRLD"`.
+
+### Capability block
+
+`supports.createParentSpec` advertises:
+
+- `supportedParents: ["CELL", "DIAL", "QUST"]`
+- `subGroupVocabulary.CELL: ["Persistent", "Temporary", "Visible when Distant"]`
+- `defaultSubGroup.CELL` for the default signature heuristic
+- `unsupportedParents: ["WRLD"]`
+- `wrldDeferralReason`
+
+Signature validity is still native xEdit behavior. The CLI does not add a
+protocol-side allowlist for which signatures can be created under a parent.
 
 ## Save / durability semantics
 

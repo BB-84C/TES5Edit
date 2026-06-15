@@ -4,7 +4,7 @@
 
 This subsystem makes promises along these axes; each axis has its own compatibility tier:
 
-| Axis | Stability tier (at 0.15) | Notes |
+| Axis | Stability tier (at 0.16) | Notes |
 |---|---|---|
 | Wire protocol envelope shape | Frozen | `{ok, result}` and `{ok, error: {code, details}}` shapes are stable. |
 | `system.capabilities` schema | Additive-only | New fields under `supports.*` are additive; clients ignore unknown keys. |
@@ -15,7 +15,7 @@ This subsystem makes promises along these axes; each axis has its own compatibil
 
 ## Contract Version
 
-Current: **0.15** (Phase 15C — ChildGroup-aware `records.references` and `records.conflict_status`)
+Current: **0.16** (Phase 15D — `records.create` parent-spec for ChildGroup authoring)
 
 ### Additive history
 
@@ -27,6 +27,27 @@ Current: **0.15** (Phase 15C — ChildGroup-aware `records.references` and `reco
 - **0.13: Phase 15A** — `supports.childGroupNavigation` and `\Child Group` read-side navigation
 - **0.14: Phase 15B** — `supports.applyFilterExtensions`, `parentFormId`, and `*Regex` filter fields
 - **0.15: Phase 15C** — `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `records.references.recursive`, and additive `records.conflict_status.result.childGroup`
+- **0.16: Phase 15D** — `supports.createParentSpec` and optional `records.create.parent` for CELL/DIAL/QUST ChildGroup authoring
+
+## 0.16 (2026-06-15) — Phase 15D records.create parent-spec
+
+Design: `docs/plans/2026-06-15-xedit-phase15d-records-create-parent-spec-design.md`.
+
+- Added: optional `records.create.parent = {file, formId, subGroup?}`. When
+  supplied, `records.create` authors into the addressed parent record's ChildGroup
+  instead of a top-level file group.
+- Supported parents: `CELL`, `DIAL`, and `QUST`. `CELL` accepts
+  `subGroup: "Persistent" | "Temporary" | "Visible when Distant"`; omitted
+  `subGroup` defaults `REFR`/`ACHR`/`PGRD`/`LAND`/`NAVM` to `Temporary` and other
+  signatures to `Persistent`.
+- Deferred: `WRLD` parent-spec returns `invalid_request` with
+  `error.details.unsupportedParent: "WRLD"` because Block/Sub-Block parent
+  resolution is a later-phase problem.
+- Added: `supports.createParentSpec` capability block documenting supported
+  parents, CELL subgroup vocabulary, defaults, and WRLD deferral.
+- Unchanged: callers omitting `parent` keep the pre-0.16 top-level
+  `records.create` behavior. Signature support remains native xEdit behavior; no
+  CLI-side signature allowlist was added.
 
 ## 0.15 (2026-06-15) — Phase 15C references + conflict ChildGroup descent
 
@@ -103,12 +124,12 @@ Frozen Phase 6E `supports.jobs.kinds` membership and order unchanged.
 Note: clients should not assume new `object.kind` enum values are exhaustive.
 Forward compatibility requires that unknown `kind` values are ignored.
 
-## What `0.15` promises
+## What `0.16` promises
 
-The `0.15` public wrapper-facing contract surface comprises:
+The `0.16` public wrapper-facing contract surface comprises:
 
 - **Wire envelope shapes**: `{ok: true, result: <value>}` for success; `{ok: false, error: {code: <string>, details: <object>}}` for failure. Both shapes are stable across `0.x` versions.
-- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, and `supports.conflictStatusChildGroup` blocks introduced through 0.15.
+- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, and `supports.createParentSpec` blocks introduced through 0.16.
 - **`supports.jobs.kinds` membership and order**: byte-for-byte preserved from the earlier freeze. The exact list is enumerated in `contract-reference.md`. Adding, removing, or reordering any kind is a major bump.
 - **Per-code `error.details` shape for the 7 lifecycle codes**: `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The full per-code field set is documented in `contract-reference.md` and is preserved byte-for-byte from `0.8` into `0.9`. Adding a field to any of these codes is a major bump.
 - **New request-validation tier error code `consent_required`**: `error.details = {deniedReason: string, commandName: string, mutationCategory: string}`. Returned at the request boundary when a mutating command is issued against a daemon launched without `-IKnowWhatImDoing`. Does NOT carry script-lifecycle fields (`messages`, `messagesTruncated`, `ranInitialize`, etc.) because no script execution has begun.
@@ -119,9 +140,9 @@ The full schema reference, per-field types, and per-command envelope examples li
 
 ## What counts as breaking
 
-- Renaming any field present in `0.15`.
-- Removing any field present in `0.15`.
-- Semantically narrowing the meaning of any field present in `0.15`.
+- Renaming any field present in `0.16`.
+- Removing any field present in `0.16`.
+- Semantically narrowing the meaning of any field present in `0.16`.
 - Adding a member to or reordering `supports.jobs.kinds`.
 - Adding a field to or modifying any frozen 7-code lifecycle `error.details` shape.
 

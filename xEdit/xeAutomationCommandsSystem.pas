@@ -141,11 +141,12 @@ var
   lApplyFilterRegex: TJsonObject;
   lReferencesRecursive: TJsonObject;
   lConflictStatusChildGroup: TJsonObject;
+  lCreateParentSpec: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15C (0.14 -> 0.15): additive ChildGroup-aware relationship collectors.
+  // Phase 15D (0.15 -> 0.16): additive parent-spec authoring for records.create.
   // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.15';
+  Result.S['contractVersion'] := '0.16';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -383,6 +384,30 @@ begin
   end;
   lConflictStatusChildGroup.I['conflictingHitsMax'] := 20;
   lConflictStatusChildGroup.S['omittedWhen'] := 'no-child-group-or-empty-child-group';
+
+  // records.create parent-spec is an opt-in write-side route into existing
+  // ChildGroup owners; native xEdit Add still owns per-signature validity.
+  lCreateParentSpec := Result.O['supports'].O['createParentSpec'];
+  with lCreateParentSpec.A['supportedParents'] do begin
+    Add('CELL');
+    Add('DIAL');
+    Add('QUST');
+  end;
+  with lCreateParentSpec.O['subGroupVocabulary'].A['CELL'] do begin
+    Add('Persistent');
+    Add('Temporary');
+    Add('Visible when Distant');
+  end;
+  with lCreateParentSpec.O['defaultSubGroup'].O['CELL'] do begin
+    S['REFR'] := 'Temporary';
+    S['ACHR'] := 'Temporary';
+    S['PGRD'] := 'Temporary';
+    S['LAND'] := 'Temporary';
+    S['NAVM'] := 'Temporary';
+    S['_other_'] := 'Persistent';
+  end;
+  lCreateParentSpec.A['unsupportedParents'].Add('WRLD');
+  lCreateParentSpec.S['wrldDeferralReason'] := 'Block/Sub-Block parent resolution deferred to a future phase';
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
