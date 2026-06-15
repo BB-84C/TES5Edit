@@ -32,6 +32,15 @@ uses
 const
   xeAutomationRecordsListLimit = 100;
 
+type
+  TxeAutomationCreateParentSpec = record
+    HasParent: Boolean;
+    FileName: string;
+    FormId: Cardinal;
+    HasSubGroup: Boolean;
+    SubGroup: string;
+  end;
+
 function xeAutomationCompareFileLoadOrder(AList: TStringList; AIndex1, AIndex2: Integer): Integer;
 var
   lFile1: IwbFile;
@@ -213,6 +222,152 @@ end;
 function xeAutomationRequireCreatableRecordSignature(const AArgs: TJsonObject): string;
 begin
   Result := UpperCase(xeAutomationRequireStringArg(AArgs, 'signature'));
+end;
+
+function xeAutomationInvalidCreateParentRequest(const AMessage, AInvalidField: string): ExeAutomationError;
+var
+  lDetails: TJsonObject;
+begin
+  lDetails := TJsonObject.Create;
+  try
+    if AInvalidField <> '' then
+      lDetails.S['invalidField'] := AInvalidField;
+    Result := xeAutomationNewError(xeAutomationErrorInvalidRequest, AMessage, lDetails);
+  finally
+    lDetails.Free;
+  end;
+end;
+
+function xeAutomationUnsupportedCreateParentRequest(const AParentSignature, AMessage: string): ExeAutomationError;
+var
+  lDetails: TJsonObject;
+begin
+  lDetails := TJsonObject.Create;
+  try
+    lDetails.S['unsupportedParent'] := AParentSignature;
+    Result := xeAutomationNewError(xeAutomationErrorInvalidRequest, AMessage, lDetails);
+  finally
+    lDetails.Free;
+  end;
+end;
+
+function xeAutomationReadCreateParentSpec(const AArgs: TJsonObject; out AParentSpec: TxeAutomationCreateParentSpec): Boolean;
+var
+  lParent: TJsonObject;
+  lFormID: string;
+begin
+  AParentSpec.HasParent := False;
+  AParentSpec.FileName := '';
+  AParentSpec.FormId := 0;
+  AParentSpec.HasSubGroup := False;
+  AParentSpec.SubGroup := '';
+
+  Result := xeAutomationArgPresent(AArgs, 'parent');
+  if not Result then
+    Exit;
+
+  if AArgs.Types['parent'] <> jdtObject then
+    raise xeAutomationInvalidCreateParentRequest('Automation records.create parent must be an object', 'parent');
+
+  lParent := AArgs.O['parent'];
+  AParentSpec.HasParent := True;
+  AParentSpec.FileName := xeAutomationRequireStringArg(lParent, 'file');
+  lFormID := xeAutomationRequireStringArg(lParent, 'formId');
+  try
+    AParentSpec.FormId := xeAutomationParseFormIdHex(lFormID);
+  except
+    on E: ExeAutomationError do
+      raise xeAutomationInvalidCreateParentRequest(E.Message, 'parent.formId');
+  end;
+  AParentSpec.HasSubGroup := xeAutomationArgPresent(lParent, 'subGroup');
+  if AParentSpec.HasSubGroup then begin
+    AParentSpec.SubGroup := xeAutomationReadStringArg(lParent, 'subGroup');
+    if AParentSpec.SubGroup = '' then
+      raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.subGroup must be a non-empty string', 'parent.subGroup');
+  end;
+end;
+
+function xeAutomationDefaultCellChildGroupForSignature(const ACreateSignature: TwbSignature): Integer;
+begin
+  if (ACreateSignature = 'REFR') or
+     (ACreateSignature = 'ACHR') or
+     (ACreateSignature = 'PGRD') or
+     (ACreateSignature = 'LAND') or
+     (ACreateSignature = 'NAVM') then
+    Result := 9
+  else
+    Result := 8;
+end;
+
+function xeAutomationCellChildGroupForSubGroup(const ASubGroup: string): Integer;
+begin
+  if SameText(ASubGroup, 'Persistent') then
+    Exit(8);
+  if SameText(ASubGroup, 'Temporary') then
+    Exit(9);
+  if SameText(ASubGroup, 'Visible when Distant') then
+    Exit(10);
+
+  raise xeAutomationInvalidCreateParentRequest(
+    Format('Automation records.create parent.subGroup "%s" is not supported for CELL', [ASubGroup]),
+    'parent.subGroup'
+  );
+end;
+
+function xeAutomationResolveCreateParentTarget(
+  const AParentSpec: TxeAutomationCreateParentSpec;
+  const ACreateSignature: TwbSignature;
+  out ATargetGroup: IwbGroupRecord): Boolean;
+var
+  lLocator: TxeAutomationLocator;
+  lParent: IwbMainRecord;
+  lChildGroup: IwbGroupRecord;
+  lTargetGroupType: Integer;
+begin
+  ATargetGroup := nil;
+  Result := AParentSpec.HasParent;
+  if not Result then
+    Exit;
+
+  lLocator.FileName := AParentSpec.FileName;
+  lLocator.FormID := IntToHex(AParentSpec.FormId, 8);
+  lLocator.Path := '';
+  lParent := xeAutomationRequireMainRecord(lLocator);
+
+  // The parent object is the write-side substitute for synthetic ChildGroup paths:
+  // validate the small owner set before native Add sees a malformed target GRUP.
+  if lParent.Signature = 'WRLD' then
+    raise xeAutomationUnsupportedCreateParentRequest('WRLD', 'WRLD parent deferred to a future phase');
+  if (lParent.Signature <> 'CELL') and (lParent.Signature <> 'DIAL') and (lParent.Signature <> 'QUST') then
+    raise xeAutomationInvalidCreateParentRequest('parent record does not own a ChildGroup', 'parent.formId');
+
+  if lParent.Signature = 'CELL' then begin
+    if AParentSpec.HasSubGroup then
+      lTargetGroupType := xeAutomationCellChildGroupForSubGroup(AParentSpec.SubGroup)
+    else
+      lTargetGroupType := xeAutomationDefaultCellChildGroupForSignature(ACreateSignature);
+
+    lChildGroup := lParent.EnsureChildGroup;
+    ATargetGroup := lChildGroup.FindChildGroup(lTargetGroupType, lParent);
+    if not Assigned(ATargetGroup) then begin
+      if lTargetGroupType = xeAutomationDefaultCellChildGroupForSignature(ACreateSignature) then
+        ATargetGroup := lChildGroup
+      else
+        raise xeAutomationInvalidTarget(Format('Automation CELL sub-group "%s" is not resolvable for parent %s', [AParentSpec.SubGroup, lParent.LoadOrderFormID.ToString(False)]));
+    end;
+    Exit;
+  end;
+
+  if AParentSpec.HasSubGroup then
+    raise xeAutomationInvalidCreateParentRequest(
+      Format('Automation records.create parent.subGroup is not supported for %s parents', [string(lParent.Signature)]),
+      'parent.subGroup'
+    );
+
+  // DIAL and QUST are one-level ChildGroup owners. EnsureChildGroup mirrors native
+  // editor behavior for empty parents so the following Add remains the only record
+  // creation seam and xEdit still owns signature validity.
+  ATargetGroup := lParent.EnsureChildGroup;
 end;
 
 procedure xeAutomationWriteRecordSummary(const ATarget: TJsonObject; const ARecord: IwbMainRecord);
@@ -538,8 +693,11 @@ var
   lGroupElement: IwbElement;
   lNewElement: IwbElement;
   lGroup: IwbGroupRecord;
+  lParentSpec: TxeAutomationCreateParentSpec;
+  lParentTargetGroup: IwbGroupRecord;
   lRecord: IwbMainRecord;
   lSignature: string;
+  lCreateSignature: TwbSignature;
   lEditorID: string;
   lDeniedReason: string;
 begin
@@ -550,18 +708,35 @@ begin
 
   lFile := xeAutomationRequirePluginFile(xeAutomationRequireStringArg(AArgs, 'targetFile'));
   lSignature := xeAutomationRequireCreatableRecordSignature(AArgs);
+  lCreateSignature := StrToSignature(lSignature);
   lEditorID := xeAutomationReadStringArg(AArgs, 'editorId');
+  xeAutomationReadCreateParentSpec(AArgs, lParentSpec);
   xeAutomationRequireWritableTargetFile(lFile);
 
   try
-    // Top-level groups are a native file-structure seam. Automation deliberately
-    // avoids protocol-side signature allow-lists here and lets xEdit's Add path
-    // decide which signatures the active game/file model can actually create.
-    lGroupElement := lFile.Add(lSignature, True);
-    if not Supports(lGroupElement, IwbGroupRecord, lGroup) then
-      raise xeAutomationInvalidTarget(Format('Automation record group could not be created for signature %s', [lSignature]));
+    if xeAutomationResolveCreateParentTarget(lParentSpec, lCreateSignature, lParentTargetGroup) then begin
+      if not Assigned(lParentTargetGroup) then
+        raise xeAutomationInvalidTarget(Format('Automation parent target group could not be resolved for signature %s', [lSignature]));
+      if not SameText(lParentTargetGroup._File.FileName, lFile.FileName) then
+        raise xeAutomationInvalidTarget(Format(
+          'Automation records.create parent target must be owned by targetFile "%s"; create or copy the parent override first',
+          [lFile.FileName]
+        ));
 
-    lNewElement := lGroup.Add(lSignature, True);
+      // Parent-spec creation lands in an existing ChildGroup owner chosen by the
+      // caller, but still delegates signature support to the same native Add seam.
+      lNewElement := lParentTargetGroup.Add(lSignature, True);
+    end else begin
+      // Top-level groups are a native file-structure seam. Automation deliberately
+      // avoids protocol-side signature allow-lists here and lets xEdit's Add path
+      // decide which signatures the active game/file model can actually create.
+      lGroupElement := lFile.Add(lSignature, True);
+      if not Supports(lGroupElement, IwbGroupRecord, lGroup) then
+        raise xeAutomationInvalidTarget(Format('Automation record group could not be created for signature %s', [lSignature]));
+
+      lNewElement := lGroup.Add(lSignature, True);
+    end;
+
     if not Supports(lNewElement, IwbMainRecord, lRecord) then
       raise xeAutomationInvalidTarget(Format('Automation record could not be created for signature %s', [lSignature]));
 
