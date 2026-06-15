@@ -76,6 +76,7 @@ function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID
 function xeAutomationResolveOwnedMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
 function xeAutomationRequireMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
 function xeAutomationRequireOwnedMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+function xeAutomationPathStartsWithChildGroupPrefix(const APath: string): Boolean;
 function xeAutomationRequireElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
 function xeAutomationRequireOwnedElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
 
@@ -84,12 +85,14 @@ implementation
 uses
   System.Generics.Collections,
   SysUtils,
+  StrUtils,
   Types,
   JclStrings,
   xeAutomationErrors;
 
 const
   xeAutomationRecordSearchLimit = 100;
+  xeAutomationChildGroupPathPrefix = '\Child Group';
 
 function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
 begin
@@ -813,7 +816,249 @@ begin
     raise xeAutomationRecordNotFound(ALocator.FileName, ALocator.FormID);
 end;
 
+function xeAutomationPathStartsWithChildGroupPrefix(const APath: string): Boolean;
+var
+  L: Integer;
+begin
+  Result := False;
+  L := Length(xeAutomationChildGroupPathPrefix);
+  if Length(APath) < L then
+    Exit;
+  if not StartsText(xeAutomationChildGroupPathPrefix, APath) then
+    Exit;
+  if Length(APath) = L then begin
+    Result := True;
+    Exit;
+  end;
+  Result := (APath[L + 1] = '\');
+end;
+
+function xeAutomationEncodeGridLabel(const AX, AY: SmallInt): Cardinal;
+var
+  lLabel: LongRecSmall;
+begin
+  lLabel.Lo := AY;
+  lLabel.Hi := AX;
+  Move(lLabel, Result, SizeOf(Result));
+end;
+
+function xeAutomationTryParseGridLabel(const ALabel: string; out AX, AY: SmallInt): Boolean;
+var
+  lCommaPos: Integer;
+  lXValue: Integer;
+  lYValue: Integer;
+begin
+  Result := False;
+  AX := 0;
+  AY := 0;
+
+  lCommaPos := Pos(',', ALabel);
+  if lCommaPos < 1 then
+    Exit;
+
+  if not TryStrToInt(Trim(Copy(ALabel, 1, lCommaPos - 1)), lXValue) then
+    Exit;
+  if not TryStrToInt(Trim(Copy(ALabel, lCommaPos + 1, MaxInt)), lYValue) then
+    Exit;
+  if (lXValue < Low(SmallInt)) or (lXValue > High(SmallInt)) or
+     (lYValue < Low(SmallInt)) or (lYValue > High(SmallInt)) then
+    Exit;
+
+  AX := SmallInt(lXValue);
+  AY := SmallInt(lYValue);
+  Result := True;
+end;
+
+function xeAutomationFindGroupByTypeAndLabel(
+  const AParentGroup: IwbGroupRecord;
+  const AGroupType: Integer;
+  const AGroupLabel: Cardinal): IwbGroupRecord;
+var
+  lContainer: IwbContainerElementRef;
+  lGroup: IwbGroupRecord;
+  i: Integer;
+begin
+  Result := nil;
+  if not Assigned(AParentGroup) then
+    Exit;
+  if not Supports(AParentGroup, IwbContainerElementRef, lContainer) then
+    Exit;
+
+  for i := 0 to Pred(lContainer.ElementCount) do
+    if Supports(lContainer.Elements[i], IwbGroupRecord, lGroup) and
+       (lGroup.GroupType = AGroupType) and
+       (lGroup.GroupLabel = AGroupLabel) then
+      Exit(lGroup);
+end;
+
+function xeAutomationFindBlockGroup(
+  const AParentGroup: IwbGroupRecord;
+  const AX, AY: SmallInt): IwbGroupRecord;
+begin
+  Result := xeAutomationFindGroupByTypeAndLabel(AParentGroup, 4, xeAutomationEncodeGridLabel(AX, AY));
+end;
+
+function xeAutomationFindBlockGroupByLabel(
+  const AParentGroup: IwbGroupRecord;
+  const ALabel: string): IwbGroupRecord;
+var
+  lX: SmallInt;
+  lY: SmallInt;
+begin
+  Result := nil;
+  if xeAutomationTryParseGridLabel(ALabel, lX, lY) then
+    Result := xeAutomationFindBlockGroup(AParentGroup, lX, lY);
+end;
+
+function xeAutomationFindPersistentWorldCell(const AWorldChildGroup: IwbGroupRecord): IwbMainRecord;
+var
+  lContainer: IwbContainerElementRef;
+  lRecord: IwbMainRecord;
+  i: Integer;
+begin
+  Result := nil;
+  if not Assigned(AWorldChildGroup) then
+    Exit;
+  if not Supports(AWorldChildGroup, IwbContainerElementRef, lContainer) then
+    Exit;
+
+  // A WRLD persistent cell is a direct CELL main record in the world ChildGroup;
+  // it is not contained by the exterior Block/Sub-Block GRUP hierarchy.
+  for i := 0 to Pred(lContainer.ElementCount) do
+    if Supports(lContainer.Elements[i], IwbMainRecord, lRecord) and
+       SameText(lRecord.Signature, 'CELL') and lRecord.IsPersistent then
+      Exit(lRecord);
+end;
+
+function xeAutomationFindSubBlockByLabel(
+  const AParentGroup: IwbGroupRecord;
+  const ALabel: string): IwbGroupRecord;
+var
+  lX: SmallInt;
+  lY: SmallInt;
+begin
+  Result := nil;
+  if xeAutomationTryParseGridLabel(ALabel, lX, lY) then
+    Result := xeAutomationFindGroupByTypeAndLabel(AParentGroup, 5, xeAutomationEncodeGridLabel(lX, lY));
+end;
+
+function xeAutomationResolveChildGroupRemainder(
+  const ASubGroup: IwbGroupRecord;
+  const ARemainder: string): IwbElement;
+var
+  lContainer: IwbContainerElementRef;
+  lFirstSegment: string;
+  lRest: string;
+  lSeparatorPos: Integer;
+  lSubBlock: IwbGroupRecord;
+begin
+  Result := nil;
+  if not Assigned(ASubGroup) or (ARemainder = '') then
+    Exit;
+
+  lSeparatorPos := Pos('\', ARemainder);
+  if lSeparatorPos = 0 then begin
+    lFirstSegment := ARemainder;
+    lRest := '';
+  end else begin
+    lFirstSegment := Copy(ARemainder, 1, lSeparatorPos - 1);
+    lRest := Copy(ARemainder, lSeparatorPos + 1, MaxInt);
+  end;
+
+  if SameText(Copy(lFirstSegment, 1, Length('Sub-Block ')), 'Sub-Block ') then begin
+    lSubBlock := xeAutomationFindSubBlockByLabel(ASubGroup, Copy(lFirstSegment, Length('Sub-Block ') + 1, MaxInt));
+    if not Assigned(lSubBlock) then
+      Exit;
+    if lRest = '' then
+      Exit(lSubBlock);
+    if Supports(lSubBlock, IwbContainerElementRef, lContainer) then
+      Result := lContainer.ElementByPath[lRest];
+    Exit;
+  end;
+
+  if Supports(ASubGroup, IwbContainerElementRef, lContainer) then
+    Result := lContainer.ElementByPath[ARemainder];
+end;
+
+function xeAutomationFindLabeledSubGroup(
+  const AParentGroup: IwbGroupRecord;
+  const AOwnerRecord: IwbMainRecord;
+  const ALabel: string): IwbElement;
+begin
+  Result := nil;
+  if not Assigned(AParentGroup) or not Assigned(AOwnerRecord) then
+    Exit;
+
+  if SameText(AOwnerRecord.Signature, 'CELL') then begin
+    if SameText(ALabel, 'Persistent') then
+      Exit(AParentGroup.FindChildGroup(8, AOwnerRecord));
+    if SameText(ALabel, 'Temporary') then
+      Exit(AParentGroup.FindChildGroup(9, AOwnerRecord));
+    if SameText(ALabel, 'Visible when Distant') then
+      Exit(AParentGroup.FindChildGroup(10, AOwnerRecord));
+    Exit;
+  end;
+
+  if SameText(AOwnerRecord.Signature, 'WRLD') then begin
+    if SameText(ALabel, 'Persistent') then
+      Exit(xeAutomationFindPersistentWorldCell(AParentGroup));
+    if SameText(Copy(ALabel, 1, Length('Block ')), 'Block ') then
+      Exit(xeAutomationFindBlockGroupByLabel(AParentGroup, Copy(ALabel, Length('Block ') + 1, MaxInt)));
+  end;
+end;
+
+function xeAutomationResolveChildGroupPath(const ARecord: IwbMainRecord; const APath: string): IwbElement;
+var
+  lChildGroup: IwbGroupRecord;
+  lContainer: IwbContainerElementRef;
+  lFirstSegment: string;
+  lRemainder: string;
+  lResolvedElement: IwbElement;
+  lSeparatorPos: Integer;
+  lSubGroup: IwbGroupRecord;
+  lTrimmedPath: string;
+begin
+  Result := nil;
+  if not Assigned(ARecord) then
+    Exit;
+
+  lChildGroup := ARecord.ChildGroup;
+  if not Assigned(lChildGroup) then
+    Exit;
+
+  lTrimmedPath := APath;
+  if (lTrimmedPath <> '') and (lTrimmedPath[1] = '\') then
+    Delete(lTrimmedPath, 1, 1);
+  if lTrimmedPath = '' then
+    Exit(lChildGroup);
+
+  lSeparatorPos := Pos('\', lTrimmedPath);
+  if lSeparatorPos = 0 then begin
+    lFirstSegment := lTrimmedPath;
+    lRemainder := '';
+  end else begin
+    lFirstSegment := Copy(lTrimmedPath, 1, lSeparatorPos - 1);
+    lRemainder := Copy(lTrimmedPath, lSeparatorPos + 1, MaxInt);
+  end;
+
+  lResolvedElement := xeAutomationFindLabeledSubGroup(lChildGroup, ARecord, lFirstSegment);
+  if Assigned(lResolvedElement) then begin
+    if lRemainder = '' then
+      Exit(lResolvedElement);
+    if Supports(lResolvedElement, IwbGroupRecord, lSubGroup) then
+      Exit(xeAutomationResolveChildGroupRemainder(lSubGroup, lRemainder));
+    if Supports(lResolvedElement, IwbContainerElementRef, lContainer) then
+      Exit(lContainer.ElementByPath[lRemainder]);
+    Exit;
+  end;
+
+  if Supports(lChildGroup, IwbContainerElementRef, lContainer) then
+    Result := lContainer.ElementByPath[lTrimmedPath];
+end;
+
 function xeAutomationRequireElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
+var
+  lAfterPrefix: string;
 begin
   ARecord := xeAutomationRequireMainRecord(ALocator);
 
@@ -821,6 +1066,16 @@ begin
   // "the record root", which keeps record-root traversal on the same locator shape.
   if ALocator.Path = '' then
     Exit(ARecord);
+
+  // Phase 15A: ChildGroup path-prefix dispatch handles a sibling GRUP, not a
+  // normal record element; all other paths preserve existing ElementByPath behavior.
+  if xeAutomationPathStartsWithChildGroupPrefix(ALocator.Path) then begin
+    lAfterPrefix := Copy(ALocator.Path, Length(xeAutomationChildGroupPathPrefix) + 1, MaxInt);
+    Result := xeAutomationResolveChildGroupPath(ARecord, lAfterPrefix);
+    if not Assigned(Result) then
+      raise xeAutomationElementNotFound(ALocator.FileName, ALocator.FormID, ALocator.Path);
+    Exit;
+  end;
 
   Result := ARecord.ElementByPath[ALocator.Path];
   if not Assigned(Result) then
@@ -835,6 +1090,13 @@ begin
   // file-local FormID compatibility shape, but not a master record reached through it.
   if ALocator.Path = '' then
     Exit(ARecord);
+
+  // Synthetic ChildGroup locators are navigation breadcrumbs only. Mutation verbs
+  // must re-enter through the flat FormID locator emitted for the resolved record,
+  // otherwise response envelopes can imply the original parent record was mutated.
+  if xeAutomationPathStartsWithChildGroupPrefix(ALocator.Path) then
+    raise xeAutomationInvalidTarget(
+      'Synthetic ChildGroup paths are read-only; mutate through the resolved record''s FormID locator');
 
   Result := ARecord.ElementByPath[ALocator.Path];
   if not Assigned(Result) then

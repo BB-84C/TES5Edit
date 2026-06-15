@@ -69,6 +69,150 @@ end;
 
 function xeAutomationNewElementResponse(const ARecord: IwbMainRecord; const AElement: IwbElement): TJsonObject; forward;
 
+procedure xeAutomationWriteMainRecordSummary(const ATarget: TJsonObject; const ARecord: IwbMainRecord);
+begin
+  ATarget.S['kind'] := 'record';
+  ATarget.S['signature'] := ARecord.Signature;
+  ATarget.S['formId'] := ARecord.LoadOrderFormID.ToString(False);
+  ATarget.B['isMaster'] := ARecord.IsMaster;
+  ATarget.B['isDeleted'] := ARecord.IsDeleted;
+  ATarget.B['isWinningOverride'] := ARecord.IsWinningOverride;
+  ATarget.I['overrideCount'] := ARecord.OverrideCount;
+
+  if ARecord.CanHaveEditorID and (Trim(ARecord.EditorID) <> '') then
+    ATarget.S['editorId'] := xeAutomationBoundedText(ARecord.EditorID);
+  if ARecord.CanHaveFullName and (Trim(ARecord.FullName) <> '') then
+    ATarget.S['fullName'] := xeAutomationBoundedText(ARecord.FullName);
+  if Trim(ARecord.DisplayNameKey) <> '' then
+    ATarget.S['displayNameKey'] := xeAutomationBoundedText(ARecord.DisplayNameKey);
+end;
+
+function xeAutomationNewMainRecordElementResponse(const ARecord: IwbMainRecord): TJsonObject;
+begin
+  Result := xeAutomationNewObjectResponse(
+    ARecord._File.FileName,
+    ARecord.LoadOrderFormID.ToString(False),
+    ''
+  );
+  xeAutomationWriteMainRecordSummary(Result.O['object'], ARecord);
+  // Main records reached while walking a ChildGroup re-enter the existing record
+  // locator contract so every other records.* / elements.* verb can use them unchanged.
+  xeAutomationAddChildrenRelation(Result);
+end;
+
+function xeAutomationGroupGridLabel(const AGroup: IwbGroupRecord): string;
+begin
+  Result := Format('%d, %d', [
+    LongRecSmall(AGroup.GroupLabel).Hi,
+    LongRecSmall(AGroup.GroupLabel).Lo
+  ]);
+end;
+
+function xeAutomationChildGroupSynthLabel(
+  const AParentGroup, AChildGroup: IwbGroupRecord): string;
+begin
+  Result := '';
+  if not Assigned(AChildGroup) then
+    Exit;
+
+  case AChildGroup.GroupType of
+    4:
+      Result := 'Block ' + xeAutomationGroupGridLabel(AChildGroup);
+    5:
+      Result := 'Sub-Block ' + xeAutomationGroupGridLabel(AChildGroup);
+    8:
+      Result := 'Persistent';
+    9:
+      Result := 'Temporary';
+    10:
+      if Assigned(AParentGroup) and (AParentGroup.GroupType = 6) then
+        Result := 'Visible when Distant'
+      else
+        Result := AChildGroup.ShortName;
+    6:
+      if Assigned(AParentGroup) and (AParentGroup.GroupType = 1) then
+        Result := 'Persistent'
+      else
+        Result := AChildGroup.ShortName;
+  else
+    Result := AChildGroup.ShortName;
+  end;
+end;
+
+function xeAutomationSuppressContextualChildGroup(
+  const AParentGroup, AChildGroup: IwbGroupRecord): Boolean;
+begin
+  // WRLD ChildGroups can contain both the persistent CELL record and that CELL's
+  // own GroupType-6 children GRUP. Emit the CELL by flat FormID only; callers can
+  // then follow the CELL's own \Child Group breadcrumb without a colliding
+  // WRLD-relative \Child Group\Persistent synthetic path.
+  Result := Assigned(AParentGroup) and Assigned(AChildGroup) and
+    (AParentGroup.GroupType = 1) and (AChildGroup.GroupType = 6);
+end;
+
+function xeAutomationNewChildGroupStub(
+  const AOwnerRecord: IwbMainRecord;
+  const AGroup: IwbGroupRecord;
+  const ASynthPath: string): TJsonObject;
+var
+  lContainer: IwbContainer;
+  lChildRecord: IwbMainRecord;
+  lSeen: TStringList;
+  lSignatures: TJsonArray;
+  lSig: string;
+  i: Integer;
+begin
+  Result := nil;
+  if not Assigned(AOwnerRecord) or not Assigned(AGroup) then
+    Exit;
+  if not Supports(AGroup, IwbContainer, lContainer) then
+    Exit;
+  // Empty ChildGroups are suppressed so callers never receive dangling
+  // navigation affordances that immediately resolve to no visible contents.
+  if lContainer.ElementCount = 0 then
+    Exit;
+
+  Result := TJsonObject.Create;
+  try
+    Result.O['locator'].S['file'] := AOwnerRecord._File.FileName;
+    Result.O['locator'].S['formId'] := AOwnerRecord.LoadOrderFormID.ToString(False);
+    Result.O['locator'].S['path'] := ASynthPath;
+
+    Result.O['object'].S['kind'] := 'child_group';
+    Result.O['object'].S['name'] := xeAutomationBoundedText(AGroup.ShortName);
+    Result.O['object'].I['groupType'] := AGroup.GroupType;
+    Result.O['object'].I['count'] := lContainer.ElementCount;
+
+    lSeen := TStringList.Create;
+    try
+      lSeen.Sorted := True;
+      lSeen.Duplicates := dupIgnore;
+      for i := 0 to Pred(lContainer.ElementCount) do
+        if Supports(lContainer.Elements[i], IwbMainRecord, lChildRecord) then begin
+          lSig := string(lChildRecord.Signature);
+          if lSeen.IndexOf(lSig) < 0 then
+            lSeen.Add(lSig);
+        end;
+
+      if lSeen.Count > 0 then begin
+        lSignatures := Result.O['object'].A['signatures'];
+        for i := 0 to Pred(lSeen.Count) do
+          lSignatures.Add(lSeen[i]);
+      end;
+    finally
+      lSeen.Free;
+    end;
+
+    Result.O['relations'].O['children'].S['command'] := 'elements.children';
+    Result.O['relations'].O['children'].O['locator'].S['file'] := AOwnerRecord._File.FileName;
+    Result.O['relations'].O['children'].O['locator'].S['formId'] := AOwnerRecord.LoadOrderFormID.ToString(False);
+    Result.O['relations'].O['children'].O['locator'].S['path'] := ASynthPath;
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
 function xeAutomationElementsRequiredMasters(const AArgs: TJsonObject): TJsonObject;
 var
   lLocator: TxeAutomationLocator;
@@ -106,7 +250,13 @@ end;
 function xeAutomationNewElementResponse(const ARecord: IwbMainRecord; const AElement: IwbElement): TJsonObject;
 var
   lLocatorPath: string;
+  lMainRecord: IwbMainRecord;
 begin
+  if Supports(AElement, IwbMainRecord, lMainRecord)
+    and (not SameText(lMainRecord._File.FileName, ARecord._File.FileName)
+      or (lMainRecord.LoadOrderFormID <> ARecord.LoadOrderFormID)) then
+    Exit(xeAutomationNewMainRecordElementResponse(lMainRecord));
+
   lLocatorPath := xeAutomationElementLocatorPath(AElement);
   Result := xeAutomationNewObjectResponse(
     ARecord._File.FileName,
@@ -178,10 +328,21 @@ var
   lElement: IwbElement;
   lContainer: IwbContainer;
   lChildren: TJsonArray;
+  lChild: IwbElement;
+  lChildGroup: IwbGroupRecord;
+  lChildSynthPath: string;
+  lMain: IwbMainRecord;
+  lParentGroup: IwbGroupRecord;
+  lParentSynthPath: string;
+  lStub: TJsonObject;
   i: Integer;
 begin
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireElement(lLocator, lRecord);
+  if xeAutomationPathStartsWithChildGroupPrefix(lLocator.Path) then
+    lParentSynthPath := lLocator.Path
+  else
+    lParentSynthPath := '';
 
   Result := TJsonObject.Create;
   lChildren := Result.A['children'];
@@ -190,8 +351,30 @@ begin
 
   // This command intentionally emits only one generation of child stubs. Callers
   // must opt into deeper traversal by following returned child locators explicitly.
-  for i := 0 to Pred(lContainer.ElementCount) do
-    lChildren.Add(xeAutomationNewElementResponse(lRecord, lContainer.Elements[i]));
+  for i := 0 to Pred(lContainer.ElementCount) do begin
+    lChild := lContainer.Elements[i];
+    if (lParentSynthPath <> '') and Supports(lElement, IwbGroupRecord, lParentGroup) and
+       Supports(lChild, IwbGroupRecord, lChildGroup) then begin
+      if xeAutomationSuppressContextualChildGroup(lParentGroup, lChildGroup) then
+        Continue;
+      lChildSynthPath := lParentSynthPath + '\' + xeAutomationChildGroupSynthLabel(lParentGroup, lChildGroup);
+      lStub := xeAutomationNewChildGroupStub(lRecord, lChildGroup, lChildSynthPath);
+      if Assigned(lStub) then
+        lChildren.Add(lStub);
+    end else if Supports(lChild, IwbMainRecord, lMain) then
+      lChildren.Add(xeAutomationNewMainRecordElementResponse(lMain))
+    else
+      lChildren.Add(xeAutomationNewElementResponse(lRecord, lChild));
+  end;
+
+  // Phase 15A: append the GUI-equivalent ChildGroup node as one extra virtual
+  // child. It is not part of regular element truncation/accounting and is
+  // suppressed by xeAutomationNewChildGroupStub when the underlying GRUP is empty.
+  if Supports(lElement, IwbMainRecord, lMain) and Assigned(lMain.ChildGroup) then begin
+    lStub := xeAutomationNewChildGroupStub(lMain, lMain.ChildGroup, '\Child Group');
+    if Assigned(lStub) then
+      lChildren.Add(lStub);
+  end;
 end;
 
 function xeAutomationElementsConflictStatus(const AArgs: TJsonObject): TJsonObject;
