@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.11`, captured in the Phase 13 accepted capability snapshot.
+- Current `contractVersion`: `0.13`, captured in the Phase 15A accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -193,6 +193,52 @@ Record and element locators use the stable `{file, formId, path}` shape. The loc
 
 Load-order FormID lookup remains the primary identity rule; file-local lookup is a compatibility carve-out, not a second addressing model. The audit artifact `load-order-lookup.json` found six hits for FormID `0000003C`, including the `Fallout4.esm` hit, and included both `masterOrSelf` and `winningOverride` readback fields.
 
+## ChildGroup navigation (0.13)
+
+Phase 15A adds a read-side navigation layer for xEdit ChildGroup-owned content without adding new verbs. Clients keep using `elements.children`, `elements.get`, and record locators; the only new locator vocabulary is the synthetic `\Child Group` prefix.
+
+### Prefix grammar
+
+Locator paths starting with `\Child Group` engage ChildGroup-aware resolution. The full grammar:
+
+- `\Child Group` — the owning record's ChildGroup (a sibling `IwbGroupRecord`).
+- `\Child Group\<sub-label>` — a named sub-group or named child inside the ChildGroup.
+- `\Child Group\<sub-label>\...` — further descent (WRLD only, for Block / Sub-Block).
+
+Prefix detection is tight: only the exact `\Child Group` path or a path beginning `\Child Group\` enters the ChildGroup resolver. Other paths preserve the existing locator behavior.
+
+### Parent record signatures and sub-label vocabulary
+
+| Parent | GroupType | Sub-labels |
+|---|---:|---|
+| CELL | 6 | `Persistent`, `Temporary`, `Visible when Distant` |
+| WRLD | 1 | `Persistent` (returns persistent worldspace CELL record), `Block <X>, <Y>`, `Block <X>, <Y>\Sub-Block <X>, <Y>` |
+| DIAL | 7 | (none — contents are INFOs surfaced directly) |
+| QUST | 10 | (none — contents are DLBR/SCEN/DIAL surfaced directly; only present when `wbVWDAsQuestChildren=True`) |
+
+### Round-trip example
+
+The WRLD walk uses ordinary `elements.children` breadcrumbs for every step:
+
+1. `records.get { file:"Fallout4.esm", formId:"0000003C", path:"" }` returns the Commonwealth `WRLD` record.
+2. `elements.children` on that WRLD root appends a trailing child with `object.kind:"child_group"` and `locator.path:"\\Child Group"`.
+3. `elements.children` on `path:"\\Child Group"` returns the persistent worldspace CELL as a flat record locator plus `child_group` stubs such as `path:"\\Child Group\\Block 0, 0"`.
+4. `elements.children` on a Block stub returns Sub-Block stubs such as `path:"\\Child Group\\Block 0, 0\\Sub-Block 0, 0"`.
+5. `elements.children` on a Sub-Block stub returns exterior CELL records with flat FormID locators; a returned CELL record's own `elements.children` can then expose its `Temporary` ChildGroup and REFR/ACHR/etc. child records, again as flat record locators.
+
+### Asymmetries
+
+- READ-only: synthetic `\Child Group` paths resolve through `elements.get`, `elements.children`, and other read-side element lookup surfaces.
+- Mutation verbs (`elements.set_value`, `elements.set_native_value`, `elements.add_child`, `elements.remove_child`, `elements.copy_child_to`, movement verbs, etc.) reject synthetic ChildGroup paths with `error.code:"invalid_target"`. To mutate a child record, use its flat FormID locator, which is what the breadcrumb emitted by `elements.children` always uses for records.
+
+### Empty group suppression
+
+ChildGroups with zero immediate children are suppressed; no stub appears. This is content-aware behavior, not a defect. Clients should treat the absence of a stub as "no ChildGroup content".
+
+### Block / Sub-Block coordinate format
+
+Block and Sub-Block labels use signed decimal coordinates matching xEdit GUI `ShortName` output, including the space after the comma: `Block 0, 0`, `Block -3, 2`, `Sub-Block 0, 1`.
+
 ## Save / durability semantics
 
 `session.save` is the explicit save seam. A successful response reports what xEdit did during that save operation:
@@ -217,6 +263,7 @@ See `examples/05-save-durability.md` for the wrapper-facing save example and the
 - Use documented `error.details` keys only.
 - Treat `messages` as ordered observational output for operators and diagnostics.
 - Ignore unknown keys for forward compatibility.
+- Ignore unknown `object.kind` values for forward compatibility; `child_group` is additive in 0.13 and future kinds may appear.
 - Keep `scripts.run` outside `jobs.*`; it is synchronous and non-cancelable in this contract.
 
 ## 0.9 — Consent gate (`consent_required`)
