@@ -393,6 +393,8 @@ begin
     lHits.Add(xeAutomationNewListedRecordSummary(lSearch.Hits[i]));
 
   Result.I['count'] := lHits.Count;
+  if lSearch.RegexTimeouts > 0 then
+    Result.I['regexTimeouts'] := lSearch.RegexTimeouts;
 end;
 
 function xeAutomationRecordsGet(const AArgs: TJsonObject): TJsonObject;

@@ -31,6 +31,7 @@ type
   TxeAutomationBoundedMainRecordSearch = record
     Hits: TxeAutomationMainRecords;
     Truncated: Boolean;
+    RegexTimeouts: Integer;
   end;
 
   TxeAutomationRecordFilter = record
@@ -98,6 +99,7 @@ implementation
 
 uses
   System.Generics.Collections,
+  System.Threading,
   SysUtils,
   StrUtils,
   Types,
@@ -107,6 +109,49 @@ uses
 const
   xeAutomationRecordSearchLimit = 100;
   xeAutomationChildGroupPathPrefix = '\Child Group';
+  xeAutomationRegexTimeoutMs = 100;
+  xeAutomationMaxRegexTasksInFlight = 4;
+
+var
+  xeAutomationRegexTasksInFlight: Integer = 0;
+  xeAutomationRegexTaskLock: TObject;
+
+type
+  IxeAutomationRegexMatchState = interface
+    ['{8F47082E-5451-46E8-82B0-6536788595D8}']
+    procedure Execute;
+    function GetMatched: Boolean;
+    property Matched: Boolean read GetMatched;
+  end;
+
+  TxeAutomationRegexMatchState = class(TInterfacedObject, IxeAutomationRegexMatchState)
+  private
+    FRegex: TRegEx;
+    FInput: string;
+    FMatched: Boolean;
+  public
+    constructor Create(const ARegex: TRegEx; const AInput: string);
+    procedure Execute;
+    function GetMatched: Boolean;
+  end;
+
+constructor TxeAutomationRegexMatchState.Create(const ARegex: TRegEx; const AInput: string);
+begin
+  inherited Create;
+  FRegex := ARegex;
+  FInput := AInput;
+  FMatched := False;
+end;
+
+procedure TxeAutomationRegexMatchState.Execute;
+begin
+  FMatched := FRegex.IsMatch(FInput);
+end;
+
+function TxeAutomationRegexMatchState.GetMatched: Boolean;
+begin
+  Result := FMatched;
+end;
 
 function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
 begin
@@ -209,6 +254,74 @@ begin
   // JCL globbing is case-sensitive, so normalize both sides once here and keep the
   // later filter commands on one shared case-insensitive wildcard contract.
   Result := StrMatches(UpperCase(APattern), UpperCase(AValue));
+end;
+
+function xeAutomationTryAcquireRegexTaskSlot: Boolean;
+begin
+  TMonitor.Enter(xeAutomationRegexTaskLock);
+  try
+    Result := xeAutomationRegexTasksInFlight < xeAutomationMaxRegexTasksInFlight;
+    if Result then
+      Inc(xeAutomationRegexTasksInFlight);
+  finally
+    TMonitor.Exit(xeAutomationRegexTaskLock);
+  end;
+end;
+
+procedure xeAutomationReleaseRegexTaskSlot;
+begin
+  TMonitor.Enter(xeAutomationRegexTaskLock);
+  try
+    if xeAutomationRegexTasksInFlight > 0 then
+      Dec(xeAutomationRegexTasksInFlight);
+  finally
+    TMonitor.Exit(xeAutomationRegexTaskLock);
+  end;
+end;
+
+function xeAutomationRegexMatchTimeBounded(const ARegex: TRegEx; const AInput: string;
+  ATimeoutMs: Cardinal; var ATimedOut: Boolean): Boolean;
+var
+  lTask: ITask;
+  lState: IxeAutomationRegexMatchState;
+begin
+  ATimedOut := False;
+  Result := False;
+
+  if not xeAutomationTryAcquireRegexTaskSlot then begin
+    ATimedOut := True;
+    Exit;
+  end;
+
+  lState := TxeAutomationRegexMatchState.Create(ARegex, AInput);
+  lTask := TTask.Run(
+    procedure
+    begin
+      try
+        lState.Execute;
+      finally
+        xeAutomationReleaseRegexTaskSlot;
+      end;
+    end);
+
+  // TRegEx has no interruptible match API in this RTL. Wait bounds daemon wall
+  // time; the worker may finish later, so the captured state is reference-counted.
+  if lTask.Wait(ATimeoutMs) then
+    Result := lState.Matched
+  else
+    ATimedOut := True;
+end;
+
+function xeAutomationRegexFieldMatches(const ARegex: TRegEx; const AValue: string;
+  var AFilter: TxeAutomationRecordFilter): Boolean;
+var
+  lTimedOut: Boolean;
+begin
+  Result := xeAutomationRegexMatchTimeBounded(ARegex, AValue, xeAutomationRegexTimeoutMs, lTimedOut);
+  if lTimedOut then begin
+    Inc(AFilter.RegexTimeouts);
+    Result := False;
+  end;
 end;
 
 function xeAutomationInvalidFieldRequest(const AMessage, AInvalidField: string): ExeAutomationError;
@@ -572,7 +685,7 @@ begin
   Result.Limit := xeAutomationReadLimitArg(AArgs, 'limit', xeAutomationRecordSearchLimit);
 end;
 
-function xeAutomationRecordMatchesFilter(const ARecord: IwbMainRecord; const AFilter: TxeAutomationRecordFilter): Boolean;
+function xeAutomationRecordMatchesFilter(const ARecord: IwbMainRecord; var AFilter: TxeAutomationRecordFilter): Boolean;
 var
   lBaseRecord: IwbMainRecord;
 begin
@@ -602,8 +715,14 @@ begin
     Exit;
   if AFilter.UseConflictThis and not (ARecord.ConflictThis in AFilter.ConflictThis) then
     Exit;
+  if AFilter.HasEditorIDRegex and ((not ARecord.CanHaveEditorID) or not xeAutomationRegexFieldMatches(AFilter.EditorIDRegex, ARecord.EditorID, AFilter)) then
+    Exit;
+  if AFilter.HasDisplayNameRegex and not xeAutomationRegexFieldMatches(AFilter.DisplayNameRegex, ARecord.DisplayName[True], AFilter) then
+    Exit;
+  if AFilter.HasFullNameRegex and ((not ARecord.CanHaveFullName) or not xeAutomationRegexFieldMatches(AFilter.FullNameRegex, ARecord.FullName, AFilter)) then
+    Exit;
 
-  if (Length(AFilter.BaseSignatures) > 0) or AFilter.HasBaseFormID or (AFilter.BaseEditorIDPattern <> '') or (AFilter.BaseDisplayNamePattern <> '') then begin
+  if (Length(AFilter.BaseSignatures) > 0) or AFilter.HasBaseFormID or (AFilter.BaseEditorIDPattern <> '') or (AFilter.BaseDisplayNamePattern <> '') or AFilter.HasBaseEditorIDRegex or AFilter.HasBaseDisplayNameRegex then begin
     // Base-record predicates must resolve the real linked base record; matching the
     // summarized output text would silently diverge from xEdit's actual filter logic.
     if not ARecord.CanHaveBaseRecord or not Supports(ARecord.BaseRecord, IwbMainRecord, lBaseRecord) then
@@ -616,6 +735,10 @@ begin
     if (AFilter.BaseEditorIDPattern <> '') and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(lBaseRecord.EditorID, AFilter.BaseEditorIDPattern)) then
       Exit;
     if (AFilter.BaseDisplayNamePattern <> '') and not xeAutomationGlobMatchesCI(lBaseRecord.DisplayName[True], AFilter.BaseDisplayNamePattern) then
+      Exit;
+    if AFilter.HasBaseEditorIDRegex and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationRegexFieldMatches(AFilter.BaseEditorIDRegex, lBaseRecord.EditorID, AFilter)) then
+      Exit;
+    if AFilter.HasBaseDisplayNameRegex and not xeAutomationRegexFieldMatches(AFilter.BaseDisplayNameRegex, lBaseRecord.DisplayName[True], AFilter) then
       Exit;
   end;
 
@@ -694,6 +817,7 @@ function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; con
 begin
   Result.Hits := nil;
   Result.Truncated := False;
+  Result.RegexTimeouts := 0;
   xeAutomationCollectOutgoingReferencesRecursive(ARecord, Result, ALimit);
 end;
 
@@ -703,6 +827,7 @@ var
 begin
   Result.Hits := nil;
   Result.Truncated := False;
+  Result.RegexTimeouts := 0;
 
   for i := 0 to Pred(ARecord.ReferencedByCount) do begin
     xeAutomationAddUniqueRecordHit(Result, ARecord.ReferencedBy[i], ALimit);
@@ -720,6 +845,7 @@ var
 begin
   Result.Hits := nil;
   Result.Truncated := False;
+  Result.RegexTimeouts := 0;
   lFilter := xeAutomationReadRecordFilter(AArgs);
 
   for i := Low(lFilter.Files) to High(lFilter.Files) do begin
@@ -734,14 +860,19 @@ begin
       // root records and reports truncation instead of materializing a deeper tree.
       if Length(Result.Hits) >= lFilter.Limit then begin
         Result.Truncated := True;
+        Result.RegexTimeouts := lFilter.RegexTimeouts;
         Exit;
       end;
 
       xeAutomationAddBoundedRecordHit(Result, lRecord);
       if Result.Truncated then
+      begin
+        Result.RegexTimeouts := lFilter.RegexTimeouts;
         Exit;
+      end;
     end;
   end;
+  Result.RegexTimeouts := lFilter.RegexTimeouts;
 end;
 
 function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string): TxeAutomationBoundedMainRecordSearch;
@@ -756,6 +887,7 @@ var
 begin
   Result.Hits := nil;
   Result.Truncated := False;
+  Result.RegexTimeouts := 0;
 
   if AEditorID = '' then
     raise xeAutomationInvalidRequest('Automation arg "editorId" is required');
@@ -1211,5 +1343,10 @@ begin
   if not Assigned(Result) then
     raise xeAutomationElementNotFound(ALocator.FileName, ALocator.FormID, ALocator.Path);
 end;
+
+initialization
+  // Regex timeout workers may outlive the request that spawned them; keep this
+  // tiny coordination object process-lifetime so late slot releases stay safe.
+  xeAutomationRegexTaskLock := TObject.Create;
 
 end.
