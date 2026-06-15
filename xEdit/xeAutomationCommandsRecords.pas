@@ -421,11 +421,18 @@ begin
 end;
 
 function xeAutomationRecordsReferences(const AArgs: TJsonObject): TJsonObject;
+var
+  lHasRecursive: Boolean;
+  lRecursive: Boolean;
 begin
+  lRecursive := xeAutomationReadBooleanArg(AArgs, 'recursive', lHasRecursive);
+  if not lHasRecursive then
+    lRecursive := False;
   Result := xeAutomationNewListedRecordHitsResponse(
     xeAutomationCollectOutgoingReferences(
       xeAutomationRequireRootRecord(AArgs),
-      xeAutomationReadSearchLimit(AArgs)
+      xeAutomationReadSearchLimit(AArgs),
+      lRecursive
     )
   );
 end;

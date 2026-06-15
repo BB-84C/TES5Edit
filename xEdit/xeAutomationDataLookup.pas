@@ -84,7 +84,8 @@ function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; con
 function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string = ''): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationFilterMainRecords(const AArgs: TJsonObject): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 100): Integer;
-function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer;
+  const ARecursive: Boolean): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationCollectNewMainRecordsInFile(const AFile: IwbFile): TxeAutomationMainRecords;
 function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
@@ -104,6 +105,7 @@ uses
   StrUtils,
   Types,
   JclStrings,
+  wbHelpers,
   xeAutomationErrors;
 
 const
@@ -111,6 +113,7 @@ const
   xeAutomationChildGroupPathPrefix = '\Child Group';
   xeAutomationRegexTimeoutMs = 100;
   xeAutomationMaxRegexTasksInFlight = 4;
+  xeAutomationChildGroupReferenceSignatures = 'REFR,ACHR,PGRE,PHZD,PARW,PBAR,PBEA,PCON,PFLA,PMIS,LAND,NAVM,PGRD,INFO,DLBR,SCEN,CELL,DIAL,QUST,WRLD';
 
 var
   xeAutomationRegexTasksInFlight: Integer = 0;
@@ -813,12 +816,29 @@ begin
     end;
 end;
 
-function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer;
+  const ARecursive: Boolean): TxeAutomationBoundedMainRecordSearch;
+var
+  lChildren: TDynMainRecords;
+  i: Integer;
 begin
   Result.Hits := nil;
   Result.Truncated := False;
   Result.RegexTimeouts := 0;
   xeAutomationCollectOutgoingReferencesRecursive(ARecord, Result, ALimit);
+
+  if not ARecursive or Result.Truncated or not Assigned(ARecord.ChildGroup) or (ARecord.ChildGroup.ElementCount = 0) then
+    Exit;
+
+  // ChildGroup-owned records are not part of the parent record's element subtree.
+  // Reuse xEdit's canonical sibling walker, then collect each child record shallowly
+  // so recursive:true expands the same semantic children that the GUI tree exposes.
+  lChildren := wbGetSiblingRecords(ARecord, wbStringToSignatures(xeAutomationChildGroupReferenceSignatures), True);
+  for i := Low(lChildren) to High(lChildren) do begin
+    xeAutomationCollectOutgoingReferencesRecursive(lChildren[i], Result, ALimit);
+    if Result.Truncated then
+      Exit;
+  end;
 end;
 
 function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
