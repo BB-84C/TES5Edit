@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.13`, captured in the Phase 15A accepted capability snapshot.
+- Current `contractVersion`: `0.14`, captured in the Phase 15B accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -238,6 +238,76 @@ ChildGroups with zero immediate children are suppressed; no stub appears. This i
 ### Block / Sub-Block coordinate format
 
 Block and Sub-Block labels use signed decimal coordinates matching xEdit GUI `ShortName` output, including the space after the comma: `Block 0, 0`, `Block -3, 2`, `Sub-Block 0, 1`.
+
+## apply_filter extensions (0.14)
+
+Phase 15B extends the existing `records.apply_filter` discovery verb. No new
+verb was added; existing glob fields and response fields keep their previous
+meaning.
+
+### New argument families
+
+- `parentFormId`: load-order FormID string. A candidate record matches when its
+  xEdit container/ChildGroup ownership chain contains that MainRecord. This is an
+  AND predicate with all other filters.
+- Regex alternatives to existing glob fields:
+  - `editorIdRegex`
+  - `displayNameRegex`
+  - `fullNameRegex`
+  - `baseEditorIdRegex`
+  - `baseDisplayNameRegex`
+
+Regex fields use `System.RegularExpressions.TRegEx` with `roIgnoreCase` and
+`roCompiled`. Matching is partial by default; callers should add `^` / `$` when
+they want anchoring.
+
+### Timeout behavior
+
+Each regex evaluation is bounded by a 100ms `TTask.Wait` wall-time check. The
+underlying `TRegEx.IsMatch` call is not interruptible in this RTL, so a timed-out
+worker may finish later in the background. The daemon treats timeout as a
+non-match for that record, caps concurrent in-flight regex workers, and increments
+the optional response field `result.regexTimeouts`. The field is omitted when the
+count is zero.
+
+### Conflict and invalid-regex errors
+
+Do not provide both glob and regex for the same identifier family. For example,
+`editorIdPattern` plus `editorIdRegex` returns `invalid_request` with
+`error.details.invalidField: "editorIdRegex"`.
+
+Invalid regex syntax also returns `invalid_request` with `invalidField` naming the
+bad regex argument.
+
+### Example
+
+```json
+{
+  "command": "records.apply_filter",
+  "args": {
+    "files": ["Fallout4.esm"],
+    "signatures": ["REFR"],
+    "parentFormId": "00000025",
+    "displayNameRegex": "picket fence",
+    "limit": 25
+  }
+}
+```
+
+Expected success shape is unchanged except for the optional timeout metadata:
+
+```json
+{
+  "ok": true,
+  "command": "records.apply_filter",
+  "result": {
+    "truncated": false,
+    "hits": [],
+    "count": 0,
+    "regexTimeouts": 1
+  }
+}
+```
 
 ## Save / durability semantics
 

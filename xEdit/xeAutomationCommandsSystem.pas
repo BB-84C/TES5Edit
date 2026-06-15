@@ -137,11 +137,13 @@ var
   lJobKind: string;
   lScripts: TJsonObject;
   lChildGroupNavigation: TJsonObject;
+  lApplyFilterExtensions: TJsonObject;
+  lApplyFilterRegex: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15A (0.12 -> 0.13): additive ChildGroup navigation capability
-  // advertises the reserved locator prefix and supported parent signatures.
-  Result.S['contractVersion'] := '0.13';
+  // Phase 15B (0.13 -> 0.14): additive records.apply_filter extensions for
+  // parent-scope and regex matching. Earlier supports blocks remain stable.
+  Result.S['contractVersion'] := '0.14';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -332,6 +334,26 @@ begin
     I['QUST-ChildGroup'] := 10;
   end;
   lChildGroupNavigation.S['objectKind'] := 'child_group';
+
+  // Phase 15B keeps records.apply_filter as the discovery surface: parentFormId
+  // scopes by MainRecord ancestry, while regex fields are explicit alternatives
+  // to the existing glob patterns and report timeout skips through result metadata.
+  lApplyFilterExtensions := Result.O['supports'].O['applyFilterExtensions'];
+  lApplyFilterExtensions.B['parentFormId'] := True;
+  lApplyFilterRegex := lApplyFilterExtensions.O['regex'];
+  lApplyFilterRegex.S['engine'] := 'System.RegularExpressions.TRegEx';
+  lApplyFilterRegex.I['perRecordTimeoutMs'] := 100;
+  with lApplyFilterRegex.A['fields'] do begin
+    Add('editorIdRegex');
+    Add('displayNameRegex');
+    Add('fullNameRegex');
+    Add('baseEditorIdRegex');
+    Add('baseDisplayNameRegex');
+  end;
+  lApplyFilterRegex.S['anchoring'] := 'partial';
+  lApplyFilterRegex.B['caseSensitive'] := False;
+  lApplyFilterRegex.S['combinedWithPattern'] := 'rejected';
+  lApplyFilterExtensions.S['regexTimeoutsField'] := 'result.regexTimeouts';
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
