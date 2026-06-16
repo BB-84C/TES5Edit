@@ -5709,7 +5709,7 @@ begin
         Stream := fcWhatsNew.CreateReadStream;
         try
           reMain.Lines.LoadFromStream(Stream);
-          // BB-84C automation fork: append the r1..r5 automation changelog after
+          // BB-84C automation fork: append the r1..r6 automation changelog after
           // the upstream What's New RTF so this build's audience can see what is
           // actually different from upstream 4.1.5p without leaving the binary.
           // SelStart/SelLength/SelAttributes are used so the appended block can
@@ -5718,12 +5718,23 @@ begin
             reMain.SelStart := reMain.GetTextLen;
             reMain.SelLength := 0;
             reMain.SelAttributes.Style := [fsBold];
-            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r5' + CRLF + CRLF;
+            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r6' + CRLF + CRLF;
             reMain.SelAttributes.Style := [];
             reMain.SelText :=
               'This binary is the automation-focused fork at github.com/BB-84C/TES5Edit. ' +
               'The summary below covers everything new since upstream xEdit 4.1.5p.' + CRLF + CRLF +
-              'r5 (this release):' + CRLF +
+              'r6 (this release):' + CRLF +
+              '  - ChildGroup-aware elements.children: navigate from CELL/WRLD/DIAL/QUST into placed REFR/ACHR/NAVM/INFO/SCEN/...' + CRLF +
+              '  - records.create parent-spec: author REFR/ACHR/PGRD/NAVM into CELL Persistent/Temporary, INFO into DIAL, SCEN/DLBR into QUST, exterior CELL at coords into WRLD' + CRLF +
+              '  - apply_filter parent-scope predicate and real regex matching (5 *Regex fields, 100ms timeout, multi-pattern OR via scalar-or-array)' + CRLF +
+              '  - records.references opt-in recursive ChildGroup descent; records.conflict_status now reports ChildGroup conflict summary' + CRLF +
+              '  - Opt-in reverse navigation: records.get/find_by_*/master_or_self/winning_override/elements.* now emit relations.parents when includeParents:true' + CRLF +
+              '  - elements.children gains limit/offset pagination (default 200, max 1000); responses carry count/total/offset/truncated' + CRLF +
+              '  - Capability contract advanced from 0.12 to 0.20 with 7 new additive supports.* blocks' + CRLF +
+              '  - Internal: serve named-pipe buffer raised to 4 MiB; xEdit ShortName-aligned ChildGroup path vocabulary; write-side rejects synthetic ChildGroup paths' + CRLF +
+              '  - Internal version bumped from 4.1.6r5 to 4.1.6r6; update check follows v4.1.6-automation.6 tag' + CRLF +
+              '  - What''s New tab now carries this r1..r6 changelog block.' + CRLF + CRLF +
+              'r5:' + CRLF +
               '  - FULL/DESC and other translatable inline fields on non-localized community-translated ESMs (Chinese / Japanese / Russian / Korean) now decode correctly without requiring per-mod .cpoverride sidecars.' + CRLF +
               '  - At the inline string-read boundary, raw bytes flagged dfTranslatable are probed against a strict RFC 3629 UTF-8 validator (overlong / surrogate / noncharacter / C1-control rejection, ASCII bypass, leading-BOM strip); on success the field is decoded as UTF-8, otherwise the existing CP-1252 path runs unchanged.' + CRLF +
               '  - IMPORTANT - this is a READ-SIDE change only. The GUI Edit Value / save path still encodes through the existing bsdGetEncoding chain (CP-1252 default unless overridden). If you autodetect a UTF-8 CJK string in the GUI and then save the file through xEdit, the string round-trips through CP-1252 and the on-disk bytes get corrupted. Symmetric UTF-8 read+write requires either launching with -cp:utf-8 / -cp-trans:utf-8, or shipping a .cpoverride sidecar declaring the right code page. Read-only inspection (conflict audit, override review, translation-tooling sourcing) is the safe workflow without the flag/sidecar.' + CRLF +

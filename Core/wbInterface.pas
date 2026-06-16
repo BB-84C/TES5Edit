@@ -54,22 +54,22 @@ type
   end;
 
 var
-  // BB-84C automation fork divergence from upstream 4.1.5p: bumped to 4.1.6r5 so
+  // BB-84C automation fork divergence from upstream 4.1.5p: bumped to 4.1.6r6 so
   // VersionString.ToString, wbVersionNumber() (script API), wbApplicationTitle,
   // and the GitHub update-check comparison all agree with the GitHub tag
-  // 'v4.1.6-automation.5' instead of pretending to be upstream 4.1.5p.
+  // 'v4.1.6-automation.6' instead of pretending to be upstream 4.1.5p.
   VersionString : TwbVersion = (
     Major   : 4;
     Minor   : 1;
     Release : 6;
-    Build   : 'r5';
+    Build   : 'r6';
     Title   : '';
   );
 
 const
-  // Encoded as $04_01_06_05 so it sorts strictly above the prior r4 (04010604)
+  // Encoded as $04_01_06_06 so it sorts strictly above the prior r5 (04010605)
   // and re-fires the What's New tab once after this bump.
-  wbWhatsNewVersion : Integer = 04010605;
+  wbWhatsNewVersion : Integer = 04010606;
   wbDeveloperMessageVersion : Integer = 04010507;
   wbDevCRC32App : Cardinal = $FFFFFFE4;
 
