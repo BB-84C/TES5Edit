@@ -36,6 +36,21 @@ begin
     - IwbFile(Pointer(AList.Objects[AIndex2])).LoadOrder;
 end;
 
+function xeAutomationReadBooleanArgDefault(const AArgs: TJsonObject; const AName: string;
+  const ADefault: Boolean): Boolean;
+var
+  lHasValue: Boolean;
+begin
+  Result := xeAutomationReadBooleanArg(AArgs, AName, lHasValue);
+  if not lHasValue then
+    Result := ADefault;
+end;
+
+function xeAutomationReadIncludeParentsArg(const AArgs: TJsonObject): Boolean;
+begin
+  Result := xeAutomationReadBooleanArgDefault(AArgs, 'includeParents', False);
+end;
+
 function xeAutomationCollectRequiredMasters(const AElement: IwbElement; const ATargetFile: IwbFile): TStringList;
 var
   lMasters: TwbFilesSet;
@@ -274,6 +289,19 @@ begin
     xeAutomationAddChildrenRelation(Result);
 end;
 
+procedure xeAutomationAppendParentsForElementResponse(const AResponse: TJsonObject;
+  const AOwnerRecord: IwbMainRecord; const AElement: IwbElement);
+var
+  lRecord: IwbMainRecord;
+begin
+  lRecord := AOwnerRecord;
+  if Supports(AElement, IwbMainRecord, lRecord) and Assigned(lRecord) then begin
+    xeAutomationAppendParentsRelation(AResponse, xeAutomationCollectAncestorChain(lRecord, 16));
+    Exit;
+  end;
+  xeAutomationAppendParentsRelation(AResponse, xeAutomationCollectAncestorChain(AOwnerRecord, 16));
+end;
+
 function xeAutomationElementsBuildBeforeAfterSnapshot(
   const ARecord: IwbMainRecord; const AElement: IwbElement): TJsonObject;
 begin
@@ -321,10 +349,14 @@ var
   lLocator: TxeAutomationLocator;
   lRecord: IwbMainRecord;
   lElement: IwbElement;
+  lIncludeParents: Boolean;
 begin
+  lIncludeParents := xeAutomationReadIncludeParentsArg(AArgs);
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireElement(lLocator, lRecord);
   Result := xeAutomationNewElementResponse(lRecord, lElement);
+  if lIncludeParents then
+    xeAutomationAppendParentsForElementResponse(Result, lRecord, lElement);
 end;
 
 function xeAutomationElementsChildren(const AArgs: TJsonObject): TJsonObject;
@@ -346,8 +378,11 @@ var
   lOffset: Integer;
   lTotal: Integer;
   lEndIndex: Integer;
+  lIncludeParents: Boolean;
+  lEntry: TJsonObject;
   i: Integer;
 begin
+  lIncludeParents := xeAutomationReadIncludeParentsArg(AArgs);
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireElement(lLocator, lRecord);
   lLimit := xeAutomationReadChildrenLimitArg(AArgs);
@@ -394,8 +429,12 @@ begin
     // Some main records exposed from terminal GRUPs also satisfy group-flavored
     // interfaces. Prefer the flat MainRecord locator first so terminal ChildGroup
     // walks never reinterpret real records as synthetic nested GRUP breadcrumbs.
-    if Supports(lChild, IwbMainRecord, lMain) and Assigned(lMain) then
-      lChildren.Add(xeAutomationNewMainRecordElementResponse(lMain))
+    if Supports(lChild, IwbMainRecord, lMain) and Assigned(lMain) then begin
+      lEntry := xeAutomationNewMainRecordElementResponse(lMain);
+      if lIncludeParents then
+        xeAutomationAppendParentsRelation(lEntry, xeAutomationCollectAncestorChain(lMain, 16));
+      lChildren.Add(lEntry);
+    end
     else if lParentIsChildGroup and Supports(lChild, IwbGroupRecord, lChildGroup) and Assigned(lChildGroup) then begin
       if xeAutomationSuppressContextualChildGroup(lParentGroup, lChildGroup) then
         Continue;
@@ -403,10 +442,17 @@ begin
       if lChildSynthPath = lParentSynthPath + '\' then
         Continue;
       lStub := xeAutomationNewChildGroupStub(lRecord, lChildGroup, lChildSynthPath);
-      if Assigned(lStub) then
+      if Assigned(lStub) then begin
+        if lIncludeParents then
+          xeAutomationAppendParentsRelation(lStub, xeAutomationCollectAncestorChain(lRecord, 16));
         lChildren.Add(lStub);
-    end else
-      lChildren.Add(xeAutomationNewElementResponse(lRecord, lChild));
+      end;
+    end else begin
+      lEntry := xeAutomationNewElementResponse(lRecord, lChild);
+      if lIncludeParents then
+        xeAutomationAppendParentsForElementResponse(lEntry, lRecord, lChild);
+      lChildren.Add(lEntry);
+    end;
   end;
 
   // Phase 15H keeps the Phase 15A virtual ChildGroup affordance only on the
@@ -414,8 +460,11 @@ begin
   // clients can page native children by offset without seeing duplicate stubs.
   if (lOffset = 0) and Supports(lElement, IwbMainRecord, lMain) and Assigned(lMain.ChildGroup) then begin
     lStub := xeAutomationNewChildGroupStub(lMain, lMain.ChildGroup, '\Child Group');
-    if Assigned(lStub) then
+    if Assigned(lStub) then begin
+      if lIncludeParents then
+        xeAutomationAppendParentsRelation(lStub, xeAutomationCollectAncestorChain(lMain, 16));
       lChildren.Add(lStub);
+    end;
   end;
 
   Result.I['count'] := lChildren.Count;
