@@ -426,6 +426,12 @@ begin
     Add('QUST');
     Add('WRLD');
   end;
+  // 0.18 made WRLD parent-spec supported, but older 0.16 clients may still probe
+  // these fields. Keep the additive shape: an empty unsupported list plus an
+  // explicit sentinel says the former WRLD deferral is superseded, not removed.
+  with lCreateParentSpec.A['unsupportedParents'] do begin
+  end;
+  lCreateParentSpec.S['wrldDeferralReason'] := 'superseded-by-0.18';
   with lCreateParentSpec.O['subGroupVocabulary'].A['CELL'] do begin
     Add('Persistent');
     Add('Temporary');

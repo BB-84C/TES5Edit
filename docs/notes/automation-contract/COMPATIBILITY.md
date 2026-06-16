@@ -80,7 +80,10 @@ Design: `docs/plans/2026-06-15-xedit-phase15e-wrld-parent-spec-design.md`.
   through xEdit's native `CELL[x,y]` path.
 - Added: `supports.createParentSpec.subGroupVocabulary.WRLD:["Persistent"]`,
   `wrldCoords:true`, and `wrldRequiresCellSignature:true`.
-- Removed: the Phase 15D WRLD deferral fields from `supports.createParentSpec`.
+- Evolved: the Phase 15D WRLD deferral fields remain present for additive
+  `system.capabilities` clients. In 0.18+, `unsupportedParents` is the empty
+  array `[]`, and `wrldDeferralReason` is retained as the sentinel
+  `"superseded-by-0.18"` because WRLD is no longer deferred.
 - Unchanged: non-CELL signatures under WRLD parents fail with `invalid_request`;
   create signature validity otherwise remains native xEdit behavior with no
   CLI-side signature allowlist.

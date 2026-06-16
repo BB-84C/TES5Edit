@@ -472,6 +472,10 @@ or neither shape returns `invalid_request`.
 - `subGroupVocabulary.CELL: ["Persistent", "Temporary", "Visible when Distant"]`
 - `subGroupVocabulary.WRLD: ["Persistent"]`
 - `defaultSubGroup.CELL` for the default signature heuristic
+- `unsupportedParents: []` in 0.18+ (retained for 0.16-era clients; no parent
+  signatures are currently deferred)
+- `wrldDeferralReason: "superseded-by-0.18"` in 0.18+ (sentinel retained so the
+  former deferral field evolves additively instead of disappearing)
 - `wrldCoords: true`
 - `wrldRequiresCellSignature: true`
 
