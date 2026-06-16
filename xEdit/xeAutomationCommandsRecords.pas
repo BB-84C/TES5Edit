@@ -40,6 +40,8 @@ type
     HasSubGroup: Boolean;
     SubGroup: string;
     HasCoords: Boolean;
+    CoordX: SmallInt;
+    CoordY: SmallInt;
   end;
 
 function xeAutomationCompareFileLoadOrder(AList: TStringList; AIndex1, AIndex2: Integer): Integer;
@@ -255,7 +257,10 @@ end;
 function xeAutomationReadCreateParentSpec(const AArgs: TJsonObject; out AParentSpec: TxeAutomationCreateParentSpec): Boolean;
 var
   lParent: TJsonObject;
+  lCoords: TJsonArray;
   lFormID: string;
+  lCoordValue: Int64;
+  i: Integer;
 begin
   AParentSpec.HasParent := False;
   AParentSpec.FileName := '';
@@ -263,6 +268,8 @@ begin
   AParentSpec.HasSubGroup := False;
   AParentSpec.SubGroup := '';
   AParentSpec.HasCoords := False;
+  AParentSpec.CoordX := 0;
+  AParentSpec.CoordY := 0;
 
   Result := xeAutomationArgPresent(AArgs, 'parent');
   if not Result then
@@ -288,6 +295,24 @@ begin
       raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.subGroup must be a non-empty string', 'parent.subGroup');
   end;
   AParentSpec.HasCoords := xeAutomationArgPresent(lParent, 'coords');
+  if AParentSpec.HasCoords then begin
+    if lParent.Types['coords'] <> jdtArray then
+      raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.coords must be a two-integer array', 'parent.coords');
+    lCoords := lParent.A['coords'];
+    if lCoords.Count <> 2 then
+      raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.coords must contain exactly two integers: [x,y]', 'parent.coords');
+    for i := 0 to 1 do begin
+      if not (lCoords.Types[i] in [jdtInt, jdtLong]) then
+        raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.coords values must be integers', 'parent.coords');
+      lCoordValue := lCoords.L[i];
+      if (lCoordValue < Low(SmallInt)) or (lCoordValue > High(SmallInt)) then
+        raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.coords values must be in signed int16 range', 'parent.coords');
+      if i = 0 then
+        AParentSpec.CoordX := SmallInt(lCoordValue)
+      else
+        AParentSpec.CoordY := SmallInt(lCoordValue);
+    end;
+  end;
 end;
 
 procedure xeAutomationValidateWrldCreateParentShape(
@@ -321,6 +346,7 @@ procedure xeAutomationResolveWrldCreateParentTarget(
   out ACreateName: string);
 var
   lChildGroup: IwbGroupRecord;
+  lGridCell: TwbGridCell;
 begin
   ATargetGroup := nil;
   AExistingRecord := nil;
@@ -343,10 +369,15 @@ begin
     Exit;
   end;
 
-  raise xeAutomationInvalidCreateParentRequest(
-    'Automation records.create WRLD parent.coords support is deferred until Phase 15E T2',
-    'parent.coords'
-  );
+  // Native group Add accepts the same silent world-CELL parameter syntax as the
+  // GUI path (CELL[x,y]); that keeps Block/Sub-Block creation inside xEdit core.
+  lChildGroup := AParent.EnsureChildGroup;
+  ATargetGroup := lChildGroup;
+  lGridCell.x := AParentSpec.CoordX;
+  lGridCell.y := AParentSpec.CoordY;
+  AExistingRecord := AParent.ChildByGridCell[lGridCell];
+  if not Assigned(AExistingRecord) then
+    ACreateName := Format('CELL[%d,%d]', [AParentSpec.CoordX, AParentSpec.CoordY]);
 end;
 
 function xeAutomationDefaultCellChildGroupForSignature(const ACreateSignature: TwbSignature): Integer;
