@@ -39,6 +39,7 @@ type
     FormId: Cardinal;
     HasSubGroup: Boolean;
     SubGroup: string;
+    HasCoords: Boolean;
   end;
 
 function xeAutomationCompareFileLoadOrder(AList: TStringList; AIndex1, AIndex2: Integer): Integer;
@@ -261,6 +262,7 @@ begin
   AParentSpec.FormId := 0;
   AParentSpec.HasSubGroup := False;
   AParentSpec.SubGroup := '';
+  AParentSpec.HasCoords := False;
 
   Result := xeAutomationArgPresent(AArgs, 'parent');
   if not Result then
@@ -285,6 +287,66 @@ begin
     if AParentSpec.SubGroup = '' then
       raise xeAutomationInvalidCreateParentRequest('Automation records.create parent.subGroup must be a non-empty string', 'parent.subGroup');
   end;
+  AParentSpec.HasCoords := xeAutomationArgPresent(lParent, 'coords');
+end;
+
+procedure xeAutomationValidateWrldCreateParentShape(
+  const AParentSpec: TxeAutomationCreateParentSpec;
+  const ACreateSignature: TwbSignature);
+begin
+  // WRLD authoring must choose a CELL-owned worldspace bucket explicitly; other
+  // signatures belong under a concrete CELL parent via the Phase 15D route.
+  if ACreateSignature <> 'CELL' then
+    raise xeAutomationInvalidCreateParentRequest(
+      'Automation records.create WRLD parent requires signature CELL; create child records under a CELL parent instead',
+      'signature'
+    );
+  if AParentSpec.HasSubGroup and AParentSpec.HasCoords then
+    raise xeAutomationInvalidCreateParentRequest(
+      'Automation records.create WRLD parent accepts either parent.subGroup:"Persistent" or parent.coords, not both',
+      'parent'
+    );
+  if not AParentSpec.HasSubGroup and not AParentSpec.HasCoords then
+    raise xeAutomationInvalidCreateParentRequest(
+      'Automation records.create WRLD parent requires parent.subGroup:"Persistent" or parent.coords:[x,y]',
+      'parent'
+    );
+end;
+
+procedure xeAutomationResolveWrldCreateParentTarget(
+  const AParentSpec: TxeAutomationCreateParentSpec;
+  const AParent: IwbMainRecord;
+  out ATargetGroup: IwbGroupRecord;
+  out AExistingRecord: IwbMainRecord;
+  out ACreateName: string);
+var
+  lChildGroup: IwbGroupRecord;
+begin
+  ATargetGroup := nil;
+  AExistingRecord := nil;
+  ACreateName := '';
+
+  xeAutomationValidateWrldCreateParentShape(AParentSpec, 'CELL');
+
+  if AParentSpec.HasSubGroup then begin
+    if not SameText(AParentSpec.SubGroup, 'Persistent') then
+      raise xeAutomationInvalidCreateParentRequest(
+        Format('Automation records.create parent.subGroup "%s" is not supported for WRLD; use "Persistent" or parent.coords:[x,y]', [AParentSpec.SubGroup]),
+        'parent.subGroup'
+      );
+
+    lChildGroup := AParent.EnsureChildGroup;
+    ATargetGroup := lChildGroup;
+    AExistingRecord := xeAutomationFindPersistentWorldCell(lChildGroup);
+    if not Assigned(AExistingRecord) then
+      ACreateName := 'CELL[P]';
+    Exit;
+  end;
+
+  raise xeAutomationInvalidCreateParentRequest(
+    'Automation records.create WRLD parent.coords support is deferred until Phase 15E T2',
+    'parent.coords'
+  );
 end;
 
 function xeAutomationDefaultCellChildGroupForSignature(const ACreateSignature: TwbSignature): Integer;
@@ -317,7 +379,9 @@ end;
 function xeAutomationResolveCreateParentTarget(
   const AParentSpec: TxeAutomationCreateParentSpec;
   const ACreateSignature: TwbSignature;
-  out ATargetGroup: IwbGroupRecord): Boolean;
+  out ATargetGroup: IwbGroupRecord;
+  out AExistingRecord: IwbMainRecord;
+  out ACreateName: string): Boolean;
 var
   lLocator: TxeAutomationLocator;
   lParent: IwbMainRecord;
@@ -325,6 +389,8 @@ var
   lTargetGroupType: Integer;
 begin
   ATargetGroup := nil;
+  AExistingRecord := nil;
+  ACreateName := '';
   Result := AParentSpec.HasParent;
   if not Result then
     Exit;
@@ -336,8 +402,11 @@ begin
 
   // The parent object is the write-side substitute for synthetic ChildGroup paths:
   // validate the small owner set before native Add sees a malformed target GRUP.
-  if lParent.Signature = 'WRLD' then
-    raise xeAutomationUnsupportedCreateParentRequest('WRLD', 'WRLD parent deferred to a future phase');
+  if lParent.Signature = 'WRLD' then begin
+    xeAutomationValidateWrldCreateParentShape(AParentSpec, ACreateSignature);
+    xeAutomationResolveWrldCreateParentTarget(AParentSpec, lParent, ATargetGroup, AExistingRecord, ACreateName);
+    Exit;
+  end;
   if (lParent.Signature <> 'CELL') and (lParent.Signature <> 'DIAL') and (lParent.Signature <> 'QUST') then
     raise xeAutomationInvalidCreateParentRequest('parent record does not own a ChildGroup', 'parent.formId');
 
@@ -697,10 +766,13 @@ var
   lGroup: IwbGroupRecord;
   lParentSpec: TxeAutomationCreateParentSpec;
   lParentTargetGroup: IwbGroupRecord;
+  lExistingParentRecord: IwbMainRecord;
   lRecord: IwbMainRecord;
   lSignature: string;
   lCreateSignature: TwbSignature;
+  lCreateName: string;
   lEditorID: string;
+  lAlreadyExists: Boolean;
   lDeniedReason: string;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
@@ -716,7 +788,8 @@ begin
   xeAutomationRequireWritableTargetFile(lFile);
 
   try
-    if xeAutomationResolveCreateParentTarget(lParentSpec, lCreateSignature, lParentTargetGroup) then begin
+    lAlreadyExists := False;
+    if xeAutomationResolveCreateParentTarget(lParentSpec, lCreateSignature, lParentTargetGroup, lExistingParentRecord, lCreateName) then begin
       if not Assigned(lParentTargetGroup) then
         raise xeAutomationInvalidTarget(Format('Automation parent target group could not be resolved for signature %s', [lSignature]));
       if not SameText(lParentTargetGroup._File.FileName, lFile.FileName) then
@@ -727,7 +800,14 @@ begin
 
       // Parent-spec creation lands in an existing ChildGroup owner chosen by the
       // caller, but still delegates signature support to the same native Add seam.
-      lNewElement := lParentTargetGroup.Add(lSignature, True);
+      if Assigned(lExistingParentRecord) then begin
+        lNewElement := lExistingParentRecord;
+        lAlreadyExists := True;
+      end else begin
+        if lCreateName = '' then
+          lCreateName := lSignature;
+        lNewElement := lParentTargetGroup.Add(lCreateName, True);
+      end;
     end else begin
       // Top-level groups are a native file-structure seam. Automation deliberately
       // avoids protocol-side signature allow-lists here and lets xEdit's Add path
@@ -756,7 +836,11 @@ begin
 
   Result := TJsonObject.Create;
   try
-    Result.B['changed'] := True;
+    Result.B['changed'] := not lAlreadyExists;
+    Result.B['created'] := lRecord.IsMaster and not lAlreadyExists;
+    Result.B['override'] := not lRecord.IsMaster;
+    if lAlreadyExists then
+      Result.B['alreadyExists'] := True;
     Result.B['dirty'] := lFile.Modified;
     Result.O['file'] := xeAutomationNewFileSummary(lFile);
     Result.O['locator'].S['file'] := lFile.FileName;

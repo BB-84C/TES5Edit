@@ -96,6 +96,7 @@ function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID
 function xeAutomationResolveOwnedMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
 function xeAutomationRequireMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
 function xeAutomationRequireOwnedMainRecord(const ALocator: TxeAutomationLocator): IwbMainRecord;
+function xeAutomationFindPersistentWorldCell(const AWorldChildGroup: IwbGroupRecord): IwbMainRecord;
 function xeAutomationPathStartsWithChildGroupPrefix(const APath: string): Boolean;
 function xeAutomationRequireElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
 function xeAutomationRequireOwnedElement(const ALocator: TxeAutomationLocator; out ARecord: IwbMainRecord): IwbElement;
