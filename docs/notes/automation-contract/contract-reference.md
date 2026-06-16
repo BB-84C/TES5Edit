@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.16`, captured in the Phase 15D accepted capability snapshot.
+- Current `contractVersion`: `0.17`, captured in the Phase 15H accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -453,6 +453,106 @@ a richer parent spec. WRLD parent requests return `invalid_request` with
 
 Signature validity is still native xEdit behavior. The CLI does not add a
 protocol-side allowlist for which signatures can be created under a parent.
+
+## elements.children pagination (0.17)
+
+Phase 15H extends the existing `elements.children` progressive-disclosure verb
+with offset pagination so dense ChildGroups stay below the named-pipe response
+ceiling without adding a streaming protocol or a new verb.
+
+### Arguments
+
+- `limit` (integer, optional): default `200`; valid range `1..1000` inclusive.
+  `0`, negative values, values above `1000`, and non-integers return
+  `invalid_request`.
+- `offset` (integer, optional): default `0`; valid range `>= 0`. Negative values
+  and non-integers return `invalid_request`.
+
+### Response shape
+
+The existing `children` array remains. Four additive fields appear beside it:
+
+```json
+{
+  "children": [
+    { "locator": { "file": "Fallout4.esm", "formId": "00013A9D", "path": "" }, "object": { "kind": "record", "signature": "REFR" } }
+  ],
+  "count": 1,
+  "total": 742,
+  "offset": 0,
+  "truncated": true
+}
+```
+
+- `count`: number of entries returned in this response page. The Phase 15A
+  synthetic ChildGroup stub counts as a returned entry when present.
+- `total`: native immediate-child count for the addressed container. It does not
+  include synthetic ChildGroup stubs.
+- `offset`: the requested offset echoed back.
+- `truncated`: true when more native children exist after the returned page.
+
+### ChildGroup stub interaction
+
+For a main record with a non-empty `IwbMainRecord.ChildGroup`, the
+`object.kind:"child_group"` navigation stub is appended only on the first page
+(`offset:0`). Later pages do not repeat it. The stub is appended after the native
+children in that page, counts toward `count`, and never counts toward `total`.
+
+### Examples
+
+Single page:
+
+```json
+{
+  "command": "elements.children",
+  "args": { "file": "Fallout4.esm", "formId": "000001F4", "path": "" }
+}
+```
+
+Returns `count == total`, `offset == 0`, and `truncated == false`.
+
+Multiple pages:
+
+```json
+{
+  "command": "elements.children",
+  "args": {
+    "file": "Fallout4.esm",
+    "formId": "00000025",
+    "path": "\\Child Group\\Temporary",
+    "limit": 200,
+    "offset": 200
+  }
+}
+```
+
+For the accepted FO4 fixture this returns `count:200`, `total:742`,
+`offset:200`, and `truncated:true`.
+
+Beyond total:
+
+```json
+{
+  "command": "elements.children",
+  "args": {
+    "file": "Fallout4.esm",
+    "formId": "00000025",
+    "path": "\\Child Group\\Temporary",
+    "offset": 10000
+  }
+}
+```
+
+Returns `children:[]`, `count:0`, `total:742`, `offset:10000`, and
+`truncated:false`.
+
+### Capability block
+
+`supports.elementsChildrenPagination` advertises:
+
+- `defaultLimit: 200`
+- `maxLimit: 1000`
+- `responseFields: ["count", "total", "offset", "truncated"]`
 
 ## Save / durability semantics
 

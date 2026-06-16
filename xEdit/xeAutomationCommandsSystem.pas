@@ -137,6 +137,7 @@ var
   lJobKind: string;
   lScripts: TJsonObject;
   lChildGroupNavigation: TJsonObject;
+  lElementsChildrenPagination: TJsonObject;
   lApplyFilterExtensions: TJsonObject;
   lApplyFilterRegex: TJsonObject;
   lReferencesRecursive: TJsonObject;
@@ -144,9 +145,9 @@ var
   lCreateParentSpec: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15D (0.15 -> 0.16): additive parent-spec authoring for records.create.
+  // Phase 15H (0.16 -> 0.17): additive pagination for elements.children.
   // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.16';
+  Result.S['contractVersion'] := '0.17';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -337,6 +338,18 @@ begin
     I['QUST-ChildGroup'] := 10;
   end;
   lChildGroupNavigation.S['objectKind'] := 'child_group';
+
+  // elements.children is now bounded at the verb layer so dense ChildGroups stay
+  // safely below the named-pipe buffer limit without changing the transport.
+  lElementsChildrenPagination := Result.O['supports'].O['elementsChildrenPagination'];
+  lElementsChildrenPagination.I['defaultLimit'] := 200;
+  lElementsChildrenPagination.I['maxLimit'] := 1000;
+  with lElementsChildrenPagination.A['responseFields'] do begin
+    Add('count');
+    Add('total');
+    Add('offset');
+    Add('truncated');
+  end;
 
   // Phase 15B keeps records.apply_filter as the discovery surface: parentFormId
   // scopes by MainRecord ancestry, while regex fields are explicit alternatives
