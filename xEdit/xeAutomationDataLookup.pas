@@ -32,6 +32,7 @@ type
     Hits: TxeAutomationMainRecords;
     Truncated: Boolean;
     RegexTimeouts: Integer;
+    RegexSlotsExhausted: Integer;
   end;
 
   TxeAutomationRecordFilter = record
@@ -56,6 +57,7 @@ type
     BaseDisplayNameRegex: TRegEx;
     HasBaseDisplayNameRegex: Boolean;
     RegexTimeouts: Integer;
+    RegexSlotsExhausted: Integer;
     BaseFormID: TwbFormID;
     HasBaseFormID: Boolean;
     HasIsMaster: Boolean;
@@ -283,16 +285,17 @@ begin
 end;
 
 function xeAutomationRegexMatchTimeBounded(const ARegex: TRegEx; const AInput: string;
-  ATimeoutMs: Cardinal; var ATimedOut: Boolean): Boolean;
+  ATimeoutMs: Cardinal; var ATimedOut: Boolean; var ASlotExhausted: Boolean): Boolean;
 var
   lTask: ITask;
   lState: IxeAutomationRegexMatchState;
 begin
   ATimedOut := False;
+  ASlotExhausted := False;
   Result := False;
 
   if not xeAutomationTryAcquireRegexTaskSlot then begin
-    ATimedOut := True;
+    ASlotExhausted := True;
     Exit;
   end;
 
@@ -307,8 +310,20 @@ begin
       end;
     end);
 
-  // TRegEx has no interruptible match API in this RTL. Wait bounds daemon wall
-  // time; the worker may finish later, so the captured state is reference-counted.
+  // CONTRACT: System.RegularExpressions.TRegEx has no interruptible match API in
+  // this RTL. The daemon wait only bounds how long the main apply_filter loop waits
+  // on each record; it does not terminate the worker, which may finish later using
+  // the reference-counted match state captured above.
+  //
+  // Bound class                    | Reported as
+  // ------------------------------ | ------------------------------------------
+  // Worker finishes within 100 ms  | matched/non-matched record result
+  // Worker exceeds 100 ms wait     | non-match and result.regexTimeouts++
+  // All 4 worker slots in use      | non-match and result.regexSlotsExhausted++
+  //
+  // Clients should avoid catastrophic-backtracking patterns. This Tier 1 guard is
+  // honest observability, not real worker cancellation; subprocess isolation is the
+  // future Tier 2 design required for hard wall-time termination.
   if lTask.Wait(ATimeoutMs) then
     Result := lState.Matched
   else
@@ -319,10 +334,14 @@ function xeAutomationRegexFieldMatches(const ARegex: TRegEx; const AValue: strin
   var AFilter: TxeAutomationRecordFilter): Boolean;
 var
   lTimedOut: Boolean;
+  lSlotExhausted: Boolean;
 begin
-  Result := xeAutomationRegexMatchTimeBounded(ARegex, AValue, xeAutomationRegexTimeoutMs, lTimedOut);
+  Result := xeAutomationRegexMatchTimeBounded(ARegex, AValue, xeAutomationRegexTimeoutMs, lTimedOut, lSlotExhausted);
   if lTimedOut then begin
     Inc(AFilter.RegexTimeouts);
+    Result := False;
+  end else if lSlotExhausted then begin
+    Inc(AFilter.RegexSlotsExhausted);
     Result := False;
   end;
 end;
@@ -668,6 +687,8 @@ begin
   Result.FullNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'fullNameRegex', Result.HasFullNameRegex);
   Result.BaseEditorIDRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseEditorIdRegex', Result.HasBaseEditorIDRegex);
   Result.BaseDisplayNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseDisplayNameRegex', Result.HasBaseDisplayNameRegex);
+  Result.RegexTimeouts := 0;
+  Result.RegexSlotsExhausted := 0;
 
   Result.HasParentFormID := xeAutomationArgPresent(AArgs, 'parentFormId');
   if Result.HasParentFormID then
@@ -825,6 +846,7 @@ begin
   Result.Hits := nil;
   Result.Truncated := False;
   Result.RegexTimeouts := 0;
+  Result.RegexSlotsExhausted := 0;
   xeAutomationCollectOutgoingReferencesRecursive(ARecord, Result, ALimit);
 
   if not ARecursive or Result.Truncated or not Assigned(ARecord.ChildGroup) or (ARecord.ChildGroup.ElementCount = 0) then
@@ -848,6 +870,7 @@ begin
   Result.Hits := nil;
   Result.Truncated := False;
   Result.RegexTimeouts := 0;
+  Result.RegexSlotsExhausted := 0;
 
   for i := 0 to Pred(ARecord.ReferencedByCount) do begin
     xeAutomationAddUniqueRecordHit(Result, ARecord.ReferencedBy[i], ALimit);
@@ -866,6 +889,7 @@ begin
   Result.Hits := nil;
   Result.Truncated := False;
   Result.RegexTimeouts := 0;
+  Result.RegexSlotsExhausted := 0;
   lFilter := xeAutomationReadRecordFilter(AArgs);
 
   for i := Low(lFilter.Files) to High(lFilter.Files) do begin
@@ -881,6 +905,7 @@ begin
       if Length(Result.Hits) >= lFilter.Limit then begin
         Result.Truncated := True;
         Result.RegexTimeouts := lFilter.RegexTimeouts;
+        Result.RegexSlotsExhausted := lFilter.RegexSlotsExhausted;
         Exit;
       end;
 
@@ -888,11 +913,13 @@ begin
       if Result.Truncated then
       begin
         Result.RegexTimeouts := lFilter.RegexTimeouts;
+        Result.RegexSlotsExhausted := lFilter.RegexSlotsExhausted;
         Exit;
       end;
     end;
   end;
   Result.RegexTimeouts := lFilter.RegexTimeouts;
+  Result.RegexSlotsExhausted := lFilter.RegexSlotsExhausted;
 end;
 
 function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string): TxeAutomationBoundedMainRecordSearch;
@@ -908,6 +935,7 @@ begin
   Result.Hits := nil;
   Result.Truncated := False;
   Result.RegexTimeouts := 0;
+  Result.RegexSlotsExhausted := 0;
 
   if AEditorID = '' then
     raise xeAutomationInvalidRequest('Automation arg "editorId" is required');

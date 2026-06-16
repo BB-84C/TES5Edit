@@ -263,12 +263,22 @@ they want anchoring.
 
 ### Timeout behavior
 
-Each regex evaluation is bounded by a 100ms `TTask.Wait` wall-time check. The
-underlying `TRegEx.IsMatch` call is not interruptible in this RTL, so a timed-out
-worker may finish later in the background. The daemon treats timeout as a
-non-match for that record, caps concurrent in-flight regex workers, and increments
-the optional response field `result.regexTimeouts`. The field is omitted when the
-count is zero.
+Each regex evaluation is bounded by a 100ms `TTask.Wait` wall-time check on the
+daemon's main filter loop. The underlying `TRegEx.IsMatch` call is not
+interruptible in this RTL, so a timed-out worker may finish later in the
+background; the wait bounds daemon responsiveness, not worker lifetime. The daemon
+treats that per-record wait expiry as a non-match and increments optional
+`result.regexTimeouts`.
+
+The regex worker pool is capped at four in-flight tasks. If all four slots are
+already occupied by still-running workers, the candidate record is skipped without
+starting another worker and optional `result.regexSlotsExhausted` is incremented
+instead of `result.regexTimeouts`. Both fields are omitted when zero. Clients
+should debug `regexTimeouts` as slow per-record evaluation and
+`regexSlotsExhausted` as saturation under load or repeated slow patterns. Clients
+should also avoid catastrophic-backtracking patterns; a future Phase 16+ Tier 2
+slice is expected to move regex evaluation behind subprocess isolation for real
+wall-time worker termination.
 
 ### Conflict and invalid-regex errors
 
@@ -294,7 +304,8 @@ bad regex argument.
 }
 ```
 
-Expected success shape is unchanged except for the optional timeout metadata:
+Expected success shape is unchanged except for optional regex observability
+metadata:
 
 ```json
 {
@@ -304,7 +315,8 @@ Expected success shape is unchanged except for the optional timeout metadata:
     "truncated": false,
     "hits": [],
     "count": 0,
-    "regexTimeouts": 1
+    "regexTimeouts": 1,
+    "regexSlotsExhausted": 1
   }
 }
 ```

@@ -590,6 +590,8 @@ begin
   Result.I['count'] := lHits.Count;
   if lSearch.RegexTimeouts > 0 then
     Result.I['regexTimeouts'] := lSearch.RegexTimeouts;
+  if lSearch.RegexSlotsExhausted > 0 then
+    Result.I['regexSlotsExhausted'] := lSearch.RegexSlotsExhausted;
 end;
 
 function xeAutomationRecordsGet(const AArgs: TJsonObject): TJsonObject;
