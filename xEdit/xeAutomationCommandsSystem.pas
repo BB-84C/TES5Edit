@@ -140,15 +140,16 @@ var
   lElementsChildrenPagination: TJsonObject;
   lApplyFilterExtensions: TJsonObject;
   lApplyFilterRegex: TJsonObject;
+  lApplyFilterMultiPattern: TJsonObject;
   lReferencesRecursive: TJsonObject;
   lConflictStatusChildGroup: TJsonObject;
   lCreateParentSpec: TJsonObject;
   lReverseNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15F (0.18 -> 0.19): opt-in reverse navigation parent relation.
+  // Phase 15G (0.19 -> 0.20): apply_filter scalar-or-array multi-pattern OR.
   // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.19';
+  Result.S['contractVersion'] := '0.20';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -371,6 +372,23 @@ begin
   lApplyFilterRegex.B['caseSensitive'] := False;
   lApplyFilterRegex.S['combinedWithPattern'] := 'rejected';
   lApplyFilterExtensions.S['regexTimeoutsField'] := 'result.regexTimeouts';
+  lApplyFilterMultiPattern := lApplyFilterExtensions.O['multiPattern'];
+  lApplyFilterMultiPattern.B['acceptScalar'] := True;
+  lApplyFilterMultiPattern.B['acceptArray'] := True;
+  lApplyFilterMultiPattern.I['maxArrayLength'] := 32;
+  lApplyFilterMultiPattern.S['semantics'] := 'OR';
+  with lApplyFilterMultiPattern.A['appliesTo'] do begin
+    Add('editorIdPattern');
+    Add('editorIdRegex');
+    Add('displayNamePattern');
+    Add('displayNameRegex');
+    Add('fullNamePattern');
+    Add('fullNameRegex');
+    Add('baseEditorIdPattern');
+    Add('baseEditorIdRegex');
+    Add('baseDisplayNamePattern');
+    Add('baseDisplayNameRegex');
+  end;
 
   // records.references recursion is opt-in so legacy relationship lookups stay
   // shallow unless a caller explicitly asks to union ChildGroup-owned records.

@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.19`, captured in the Phase 15F accepted capability snapshot.
+- Current `contractVersion`: `0.20`, captured in the Phase 15G accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -239,11 +239,12 @@ ChildGroups with zero immediate children are suppressed; no stub appears. This i
 
 Block and Sub-Block labels use signed decimal coordinates matching xEdit GUI `ShortName` output, including the space after the comma: `Block 0, 0`, `Block -3, 2`, `Sub-Block 0, 1`.
 
-## apply_filter extensions (0.14)
+## apply_filter extensions (0.14, extended in 0.20)
 
-Phase 15B extends the existing `records.apply_filter` discovery verb. No new
-verb was added; existing glob fields and response fields keep their previous
-meaning.
+Phase 15B extends the existing `records.apply_filter` discovery verb. Phase 15G
+keeps the same verb and generalizes the identifier `*Pattern` / `*Regex` fields
+to accept either a scalar string or an array of strings. Existing scalar glob
+fields and response fields keep their previous meaning.
 
 ### New argument families
 
@@ -256,6 +257,21 @@ meaning.
   - `fullNameRegex`
   - `baseEditorIdRegex`
   - `baseDisplayNameRegex`
+
+As of contract `0.20`, each of these ten identifier fields accepts either a
+single string or an array of strings:
+
+- `editorIdPattern`, `editorIdRegex`
+- `displayNamePattern`, `displayNameRegex`
+- `fullNamePattern`, `fullNameRegex`
+- `baseEditorIdPattern`, `baseEditorIdRegex`
+- `baseDisplayNamePattern`, `baseDisplayNameRegex`
+
+A scalar string is interpreted exactly as before. An array is evaluated with OR
+semantics inside that field; predicates across different fields remain ANDed.
+Arrays must contain 1..32 strings. Empty arrays, arrays longer than 32, and
+non-string entries return `invalid_request` with `error.details.invalidField`
+naming the malformed field.
 
 Regex fields use `System.RegularExpressions.TRegEx` with `roIgnoreCase` and
 `roCompiled`. Matching is partial by default; callers should add `^` / `$` when
@@ -289,6 +305,10 @@ Do not provide both glob and regex for the same identifier family. For example,
 Invalid regex syntax also returns `invalid_request` with `invalidField` naming the
 bad regex argument.
 
+This conflict rule applies regardless of scalar or array shape. For example,
+`editorIdPattern:["*Steel*"]` plus `editorIdRegex:"Steel"` is rejected the
+same way as two scalar fields.
+
 ### Example
 
 ```json
@@ -298,7 +318,7 @@ bad regex argument.
     "files": ["Fallout4.esm"],
     "signatures": ["REFR"],
     "parentFormId": "00000025",
-    "displayNameRegex": "picket fence",
+    "displayNameRegex": ["picket fence", "chair"],
     "limit": 25
   }
 }

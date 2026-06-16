@@ -4,7 +4,7 @@
 
 This subsystem makes promises along these axes; each axis has its own compatibility tier:
 
-| Axis | Stability tier (at 0.19) | Notes |
+| Axis | Stability tier (at 0.20) | Notes |
 |---|---|---|
 | Wire protocol envelope shape | Frozen | `{ok, result}` and `{ok, error: {code, details}}` shapes are stable. |
 | `system.capabilities` schema | Additive-only | New fields under `supports.*` are additive; clients ignore unknown keys. |
@@ -15,7 +15,7 @@ This subsystem makes promises along these axes; each axis has its own compatibil
 
 ## Contract Version
 
-Current: **0.19** (Phase 15F — opt-in reverse navigation parent relation)
+Current: **0.20** (Phase 15G — apply_filter scalar-or-array multi-pattern OR)
 
 ### Additive history
 
@@ -31,6 +31,26 @@ Current: **0.19** (Phase 15F — opt-in reverse navigation parent relation)
 - **0.17: Phase 15H** — `supports.elementsChildrenPagination` and optional `elements.children.limit` / `offset` pagination with additive response metadata
 - **0.18: Phase 15E** — extends `supports.createParentSpec` and optional `records.create.parent` for WRLD persistent/exterior CELL authoring
 - **0.19: Phase 15F** — `supports.reverseNavigation` and optional `includeParents:true` on read verbs to emit `relations.parents`
+- **0.20: Phase 15G** — `supports.applyFilterExtensions.multiPattern` and scalar-or-array OR semantics for `records.apply_filter` identifier pattern/regex fields
+
+## 0.20 (2026-06-15) — Phase 15G apply_filter multi-pattern OR
+
+Design: `docs/plans/2026-06-15-xedit-phase15g-apply-filter-multi-pattern-design.md`.
+
+- Added: the five existing glob fields and five existing regex fields under
+  `records.apply_filter` now accept either a scalar string or an array of strings.
+  Scalar strings preserve the pre-0.20 behavior as a length-1 internal array.
+- Added: within one `*Pattern` or `*Regex` array, matching uses OR semantics.
+  Predicates across different fields remain AND-composed.
+- Added: request-boundary `invalid_request` with
+  `error.details.invalidField` for empty arrays, arrays longer than 32 entries,
+  or non-string array elements.
+- Added: `supports.applyFilterExtensions.multiPattern` capability block declaring
+  scalar/array support, `maxArrayLength:32`, `semantics:"OR"`, and the ten
+  fields to which it applies.
+- Preserved: same-identifier `*Pattern` + `*Regex` conflicts are still rejected,
+  regex timeout and slot-saturation accounting remains per regex evaluation, and
+  all scalar Phase 15B `apply_filter` behavior remains backward-compatible.
 
 ## 0.19 (2026-06-15) — Phase 15F reverse navigation parent relation
 
@@ -177,12 +197,12 @@ Frozen Phase 6E `supports.jobs.kinds` membership and order unchanged.
 Note: clients should not assume new `object.kind` enum values are exhaustive.
 Forward compatibility requires that unknown `kind` values are ignored.
 
-## What `0.19` promises
+## What `0.20` promises
 
-The `0.19` public wrapper-facing contract surface comprises:
+The `0.20` public wrapper-facing contract surface comprises:
 
 - **Wire envelope shapes**: `{ok: true, result: <value>}` for success; `{ok: false, error: {code: <string>, details: <object>}}` for failure. Both shapes are stable across `0.x` versions.
-- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, and `supports.reverseNavigation` blocks introduced through 0.19.
+- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, and `supports.reverseNavigation` blocks introduced through 0.20.
 - **`supports.jobs.kinds` membership and order**: byte-for-byte preserved from the earlier freeze. The exact list is enumerated in `contract-reference.md`. Adding, removing, or reordering any kind is a major bump.
 - **Per-code `error.details` shape for the 7 lifecycle codes**: `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The full per-code field set is documented in `contract-reference.md` and is preserved byte-for-byte from `0.8` into `0.9`. Adding a field to any of these codes is a major bump.
 - **New request-validation tier error code `consent_required`**: `error.details = {deniedReason: string, commandName: string, mutationCategory: string}`. Returned at the request boundary when a mutating command is issued against a daemon launched without `-IKnowWhatImDoing`. Does NOT carry script-lifecycle fields (`messages`, `messagesTruncated`, `ranInitialize`, etc.) because no script execution has begun.
@@ -193,9 +213,9 @@ The full schema reference, per-field types, and per-command envelope examples li
 
 ## What counts as breaking
 
-- Renaming any field present in `0.19`.
-- Removing any field present in `0.19`.
-- Semantically narrowing the meaning of any field present in `0.19`.
+- Renaming any field present in `0.20`.
+- Removing any field present in `0.20`.
+- Semantically narrowing the meaning of any field present in `0.20`.
 - Adding a member to or reordering `supports.jobs.kinds`.
 - Adding a field to or modifying any frozen 7-code lifecycle `error.details` shape.
 
