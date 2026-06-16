@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.18`, captured in the Phase 15E accepted capability snapshot.
+- Current `contractVersion`: `0.19`, captured in the Phase 15F accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -557,6 +557,55 @@ Returns `children:[]`, `count:0`, `total:742`, `offset:10000`, and
 - `defaultLimit: 200`
 - `maxLimit: 1000`
 - `responseFields: ["count", "total", "offset", "truncated"]`
+
+## reverse navigation parent relation (0.19)
+
+Phase 15F extends existing read verbs with an optional `includeParents` boolean.
+The default is `false`; omitting it preserves the pre-0.19 response shape.
+
+### Arguments
+
+`includeParents:true` is accepted by:
+
+- `records.get`
+- `records.find_by_form_id`
+- `records.find_by_editor_id`
+- `records.master_or_self`
+- `records.winning_override`
+- `elements.get`
+- `elements.children`
+
+### Response shape
+
+When requested, the addressed record or returned entry includes
+`relations.parents`. Entries reuse the standard shallow record summary shape:
+
+```json
+{
+  "relations": {
+    "parents": [
+      {
+        "locator": { "file": "Fallout4.esm", "formId": "00000025", "path": "" },
+        "object": { "kind": "record", "signature": "CELL", "formId": "00000025" }
+      }
+    ]
+  }
+}
+```
+
+Parent order is nearest-first (for example, `REFR -> CELL -> WRLD`). Top-level
+records return an explicitly empty `parents: []` when requested. If
+`includeParents` is omitted or false, `relations.parents` is absent.
+
+### Capability block
+
+`supports.reverseNavigation` advertises:
+
+- `optInArg: "includeParents"`
+- `appliesTo`: the seven verbs listed above
+- `maxAncestorDepth: 16`
+- `ordering: "nearest-first"`
+- `relationKey: "parents"`
 
 ## Save / durability semantics
 

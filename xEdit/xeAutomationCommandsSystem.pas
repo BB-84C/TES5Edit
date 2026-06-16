@@ -143,11 +143,12 @@ var
   lReferencesRecursive: TJsonObject;
   lConflictStatusChildGroup: TJsonObject;
   lCreateParentSpec: TJsonObject;
+  lReverseNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15E (0.17 -> 0.18): WRLD parent-spec support for records.create.
+  // Phase 15F (0.18 -> 0.19): opt-in reverse navigation parent relation.
   // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.18';
+  Result.S['contractVersion'] := '0.19';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -423,6 +424,24 @@ begin
   lCreateParentSpec.O['subGroupVocabulary'].A['WRLD'].Add('Persistent');
   lCreateParentSpec.B['wrldCoords'] := True;
   lCreateParentSpec.B['wrldRequiresCellSignature'] := True;
+
+  // Reverse navigation is intentionally opt-in because parent arrays multiply
+  // response size on enumeration verbs. The relation entries reuse standard shallow
+  // record summaries and are ordered from immediate owner outward.
+  lReverseNavigation := Result.O['supports'].O['reverseNavigation'];
+  lReverseNavigation.S['optInArg'] := 'includeParents';
+  with lReverseNavigation.A['appliesTo'] do begin
+    Add('records.get');
+    Add('records.find_by_form_id');
+    Add('records.find_by_editor_id');
+    Add('records.master_or_self');
+    Add('records.winning_override');
+    Add('elements.get');
+    Add('elements.children');
+  end;
+  lReverseNavigation.I['maxAncestorDepth'] := 16;
+  lReverseNavigation.S['ordering'] := 'nearest-first';
+  lReverseNavigation.S['relationKey'] := 'parents';
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
