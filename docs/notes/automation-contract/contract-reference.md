@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.17`, captured in the Phase 15H accepted capability snapshot.
+- Current `contractVersion`: `0.18`, captured in the Phase 15E accepted capability snapshot.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -384,7 +384,7 @@ names, omission rule, and `conflictingHitsMax: 20`. Existing main-record
 `record`, `conflict`, and `children` fields are unchanged; clients that ignore the
 new key keep pre-0.15 behavior.
 
-## records.create parent-spec (0.16)
+## records.create parent-spec (0.16, extended in 0.18)
 
 Phase 15D extends `records.create` with an optional `parent` object for authoring
 new records into ChildGroup-owning parents without introducing a new verb.
@@ -431,25 +431,29 @@ CELL/DIAL/QUST override first), then create the child record under that parent.
 | `CELL` | Cell ChildGroup sub-GRUP | Optional: `Persistent`, `Temporary`, `Visible when Distant` |
 | `DIAL` | DIAL ChildGroup | Not allowed |
 | `QUST` | QUST ChildGroup | Not allowed |
+| `WRLD` | WRLD ChildGroup world CELL | `Persistent` or `coords:[x,y]` |
 
 When `CELL.subGroup` is omitted, default selection is:
 
 - `REFR`, `ACHR`, `PGRD`, `LAND`, `NAVM` -> `Temporary`
 - all other signatures -> `Persistent`
 
-`WRLD` is intentionally deferred because exterior Block/Sub-Block resolution needs
-a richer parent spec. WRLD parent requests return `invalid_request` with
-`error.details.unsupportedParent: "WRLD"`.
+For `WRLD` parents, `signature` must be `CELL`. Two mutually exclusive shapes are
+supported: `parent.subGroup:"Persistent"` returns or creates the persistent
+worldspace CELL, and `parent.coords:[x,y]` returns or creates the exterior CELL at
+signed int16 grid coords through xEdit's native `CELL[x,y]` path. Supplying both
+or neither shape returns `invalid_request`.
 
 ### Capability block
 
 `supports.createParentSpec` advertises:
 
-- `supportedParents: ["CELL", "DIAL", "QUST"]`
+- `supportedParents: ["CELL", "DIAL", "QUST", "WRLD"]`
 - `subGroupVocabulary.CELL: ["Persistent", "Temporary", "Visible when Distant"]`
+- `subGroupVocabulary.WRLD: ["Persistent"]`
 - `defaultSubGroup.CELL` for the default signature heuristic
-- `unsupportedParents: ["WRLD"]`
-- `wrldDeferralReason`
+- `wrldCoords: true`
+- `wrldRequiresCellSignature: true`
 
 Signature validity is still native xEdit behavior. The CLI does not add a
 protocol-side allowlist for which signatures can be created under a parent.

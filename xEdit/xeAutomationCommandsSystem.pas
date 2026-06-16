@@ -145,9 +145,9 @@ var
   lCreateParentSpec: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15H (0.16 -> 0.17): additive pagination for elements.children.
+  // Phase 15E (0.17 -> 0.18): WRLD parent-spec support for records.create.
   // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.17';
+  Result.S['contractVersion'] := '0.18';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -405,6 +405,7 @@ begin
     Add('CELL');
     Add('DIAL');
     Add('QUST');
+    Add('WRLD');
   end;
   with lCreateParentSpec.O['subGroupVocabulary'].A['CELL'] do begin
     Add('Persistent');
@@ -419,8 +420,9 @@ begin
     S['NAVM'] := 'Temporary';
     S['_other_'] := 'Persistent';
   end;
-  lCreateParentSpec.A['unsupportedParents'].Add('WRLD');
-  lCreateParentSpec.S['wrldDeferralReason'] := 'Block/Sub-Block parent resolution deferred to a future phase';
+  lCreateParentSpec.O['subGroupVocabulary'].A['WRLD'].Add('Persistent');
+  lCreateParentSpec.B['wrldCoords'] := True;
+  lCreateParentSpec.B['wrldRequiresCellSignature'] := True;
 
   // r5 (contract 0.12): expose the inline string-decoding policy so MCP
   // clients can detect that this fork autodetects UTF-8 for translatable
