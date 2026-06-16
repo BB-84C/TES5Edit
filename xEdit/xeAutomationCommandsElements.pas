@@ -342,10 +342,16 @@ var
   lParentGroup: IwbGroupRecord;
   lParentSynthPath: string;
   lStub: TJsonObject;
+  lLimit: Integer;
+  lOffset: Integer;
+  lTotal: Integer;
+  lEndIndex: Integer;
   i: Integer;
 begin
   lLocator := xeAutomationParseLocator(AArgs, True, True);
   lElement := xeAutomationRequireElement(lLocator, lRecord);
+  lLimit := xeAutomationReadChildrenLimitArg(AArgs);
+  lOffset := xeAutomationReadOffsetArg(AArgs);
   if xeAutomationPathStartsWithChildGroupPrefix(lLocator.Path) then
     lParentSynthPath := lLocator.Path
   else
@@ -353,13 +359,34 @@ begin
 
   Result := TJsonObject.Create;
   lChildren := Result.A['children'];
-  if not Supports(lElement, IwbContainer, lContainer) then
+  if not Supports(lElement, IwbContainer, lContainer) then begin
+    Result.I['count'] := 0;
+    Result.I['total'] := 0;
+    Result.I['offset'] := lOffset;
+    Result.B['truncated'] := False;
     Exit;
+  end;
+
+  lTotal := lContainer.ElementCount;
+  if lOffset >= lTotal then begin
+    Result.I['count'] := 0;
+    Result.I['total'] := lTotal;
+    Result.I['offset'] := lOffset;
+    Result.B['truncated'] := False;
+    Exit;
+  end;
+
+  if lLimit > (lTotal - lOffset) then
+    lEndIndex := lTotal
+  else
+    lEndIndex := lOffset + lLimit;
+
   lParentIsChildGroup := (lParentSynthPath <> '') and Supports(lElement, IwbGroupRecord, lParentGroup);
 
-  // This command intentionally emits only one generation of child stubs. Callers
-  // must opt into deeper traversal by following returned child locators explicitly.
-  for i := 0 to Pred(lContainer.ElementCount) do begin
+  // Pagination is applied before per-child response materialization so dense
+  // ChildGroups cannot overflow the named-pipe transport buffer. The total field
+  // remains the native immediate-child count, not the synthetic ChildGroup stub.
+  for i := lOffset to Pred(lEndIndex) do begin
     lChild := lContainer.Elements[i];
     if not Assigned(lChild) then
       Continue;
@@ -382,14 +409,19 @@ begin
       lChildren.Add(xeAutomationNewElementResponse(lRecord, lChild));
   end;
 
-  // Phase 15A: append the GUI-equivalent ChildGroup node as one extra virtual
-  // child. It is not part of regular element truncation/accounting and is
-  // suppressed by xeAutomationNewChildGroupStub when the underlying GRUP is empty.
-  if Supports(lElement, IwbMainRecord, lMain) and Assigned(lMain.ChildGroup) then begin
+  // Phase 15H keeps the Phase 15A virtual ChildGroup affordance only on the
+  // first page. It counts as a returned entry, but never as part of total, so
+  // clients can page native children by offset without seeing duplicate stubs.
+  if (lOffset = 0) and Supports(lElement, IwbMainRecord, lMain) and Assigned(lMain.ChildGroup) then begin
     lStub := xeAutomationNewChildGroupStub(lMain, lMain.ChildGroup, '\Child Group');
     if Assigned(lStub) then
       lChildren.Add(lStub);
   end;
+
+  Result.I['count'] := lChildren.Count;
+  Result.I['total'] := lTotal;
+  Result.I['offset'] := lOffset;
+  Result.B['truncated'] := lEndIndex < lTotal;
 end;
 
 function xeAutomationElementsConflictStatus(const AArgs: TJsonObject): TJsonObject;

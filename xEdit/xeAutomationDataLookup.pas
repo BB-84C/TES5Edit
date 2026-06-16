@@ -86,6 +86,8 @@ function xeAutomationFindMainRecordsByLoadOrderFormID(const AFormID: string; con
 function xeAutomationFindMainRecordsByEditorID(const AEditorID: string; const ASignature: string = ''): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationFilterMainRecords(const AArgs: TJsonObject): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 100): Integer;
+function xeAutomationReadChildrenLimitArg(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 200): Integer;
+function xeAutomationReadOffsetArg(const AArgs: TJsonObject; const AName: string = 'offset'; const ADefault: Integer = 0): Integer;
 function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer;
   const ARecursive: Boolean): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
@@ -112,6 +114,7 @@ uses
 
 const
   xeAutomationRecordSearchLimit = 100;
+  xeAutomationElementsChildrenMaxLimit = 1000;
   xeAutomationChildGroupPathPrefix = '\Child Group';
   xeAutomationRegexTimeoutMs = 100;
   xeAutomationMaxRegexTasksInFlight = 4;
@@ -527,6 +530,60 @@ end;
 function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string; const ADefault: Integer): Integer;
 begin
   Result := xeAutomationReadLimitArg(AArgs, AName, ADefault);
+end;
+
+function xeAutomationReadChildrenLimitArg(const AArgs: TJsonObject; const AName: string; const ADefault: Integer): Integer;
+var
+  lValue: Int64;
+begin
+  Result := ADefault;
+  if not Assigned(AArgs) or not AArgs.Contains(AName) then
+    Exit;
+
+  case AArgs.Types[AName] of
+    jdtInt,
+    jdtLong,
+    jdtULong:
+      lValue := AArgs.L[AName];
+  else
+    raise xeAutomationInvalidRequest(Format('Automation arg field "%s" must be an integer', [AName]));
+  end;
+
+  // elements.children is the only currently unbounded element-response surface.
+  // Reject out-of-range page sizes instead of silently clamping so wrappers can
+  // distinguish caller bugs from a valid but truncated page.
+  if (lValue < 1) or (lValue > xeAutomationElementsChildrenMaxLimit) then
+    raise xeAutomationInvalidRequest(Format(
+      'Automation arg "%s" must be between 1 and %d for elements.children pagination',
+      [AName, xeAutomationElementsChildrenMaxLimit]
+    ));
+
+  Result := Integer(lValue);
+end;
+
+function xeAutomationReadOffsetArg(const AArgs: TJsonObject; const AName: string; const ADefault: Integer): Integer;
+var
+  lValue: Int64;
+begin
+  Result := ADefault;
+  if not Assigned(AArgs) or not AArgs.Contains(AName) then
+    Exit;
+
+  case AArgs.Types[AName] of
+    jdtInt,
+    jdtLong,
+    jdtULong:
+      lValue := AArgs.L[AName];
+  else
+    raise xeAutomationInvalidRequest(Format('Automation arg field "%s" must be an integer', [AName]));
+  end;
+
+  if lValue < 0 then
+    raise xeAutomationInvalidRequest(Format('Automation arg "%s" must be greater than or equal to zero', [AName]));
+  if lValue > High(Integer) then
+    raise xeAutomationInvalidRequest(Format('Automation arg "%s" is out of supported integer range', [AName]));
+
+  Result := Integer(lValue);
 end;
 
 function xeAutomationConflictAllFromName(const AName: string): TConflictAll;
