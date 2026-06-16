@@ -222,6 +222,11 @@ begin
     Result := ADefault;
 end;
 
+function xeAutomationReadIncludeParentsArg(const AArgs: TJsonObject): Boolean;
+begin
+  Result := xeAutomationReadBooleanArgDefault(AArgs, 'includeParents', False);
+end;
+
 function xeAutomationRequireCreatableRecordSignature(const AArgs: TJsonObject): string;
 begin
   Result := UpperCase(xeAutomationRequireStringArg(AArgs, 'signature'));
@@ -512,6 +517,22 @@ begin
   xeAutomationWriteRecordSummary(Result.O['object'], ARecord);
 end;
 
+function xeAutomationNewListedRecordSummaryWithParents(const ARecord: IwbMainRecord;
+  const AIncludeParents: Boolean): TJsonObject;
+begin
+  Result := xeAutomationNewListedRecordSummary(ARecord);
+  if AIncludeParents then
+    xeAutomationAppendParentsRelation(Result, xeAutomationCollectAncestorChain(ARecord, 16));
+end;
+
+function xeAutomationNewRecordResponseWithParents(const ARecord: IwbMainRecord;
+  const AIncludeParents: Boolean): TJsonObject;
+begin
+  Result := xeAutomationNewRecordResponse(ARecord);
+  if AIncludeParents then
+    xeAutomationAppendParentsRelation(Result, xeAutomationCollectAncestorChain(ARecord, 16));
+end;
+
 procedure xeAutomationAppendChildGroupConflictSubBlock(const AResult: TJsonObject;
   const ASnapshot: TxeAutomationConflictSnapshot);
 var
@@ -625,8 +646,10 @@ var
   lSearch: TxeAutomationMainRecordSearch;
   lHits: TJsonArray;
   lFileName: string;
+  lIncludeParents: Boolean;
   i: Integer;
 begin
+  lIncludeParents := xeAutomationReadIncludeParentsArg(AArgs);
   lFileName := xeAutomationReadStringArg(AArgs, 'file');
   lSearch := xeAutomationFindMainRecordsByLoadOrderFormID(
     xeAutomationRequireStringArg(AArgs, 'formId'),
@@ -637,24 +660,26 @@ begin
   Result.B['truncated'] := lSearch.Truncated;
   lHits := Result.A['hits'];
   for i := Low(lSearch.Hits) to High(lSearch.Hits) do
-    lHits.Add(xeAutomationNewListedRecordSummary(lSearch.Hits[i]));
+    lHits.Add(xeAutomationNewListedRecordSummaryWithParents(lSearch.Hits[i], lIncludeParents));
 
   Result.I['count'] := lHits.Count;
 
   // Keep the identity lookup response shallow: callers get concrete hits plus the
   // two canonical endpoints for the same FormID, without any recursive expansion.
   if Assigned(lSearch.MasterOrSelf) then
-    Result.O['masterOrSelf'] := xeAutomationNewListedRecordSummary(lSearch.MasterOrSelf);
+    Result.O['masterOrSelf'] := xeAutomationNewListedRecordSummaryWithParents(lSearch.MasterOrSelf, lIncludeParents);
   if Assigned(lSearch.WinningOverride) then
-    Result.O['winningOverride'] := xeAutomationNewListedRecordSummary(lSearch.WinningOverride);
+    Result.O['winningOverride'] := xeAutomationNewListedRecordSummaryWithParents(lSearch.WinningOverride, lIncludeParents);
 end;
 
 function xeAutomationRecordsFindByEditorID(const AArgs: TJsonObject): TJsonObject;
 var
   lSearch: TxeAutomationBoundedMainRecordSearch;
   lHits: TJsonArray;
+  lIncludeParents: Boolean;
   i: Integer;
 begin
+  lIncludeParents := xeAutomationReadIncludeParentsArg(AArgs);
   // Keep request-shape validation at the boundary so malformed signature inputs
   // fail as structured invalid_request responses before any record traversal starts.
   lSearch := xeAutomationFindMainRecordsByEditorID(
@@ -666,7 +691,7 @@ begin
   Result.B['truncated'] := lSearch.Truncated;
   lHits := Result.A['hits'];
   for i := Low(lSearch.Hits) to High(lSearch.Hits) do
-    lHits.Add(xeAutomationNewListedRecordSummary(lSearch.Hits[i]));
+    lHits.Add(xeAutomationNewListedRecordSummaryWithParents(lSearch.Hits[i], lIncludeParents));
 
   Result.I['count'] := lHits.Count;
 end;
@@ -695,10 +720,11 @@ begin
 end;
 
 function xeAutomationRecordsGet(const AArgs: TJsonObject): TJsonObject;
+var
+  lRecord: IwbMainRecord;
 begin
-  Result := xeAutomationNewRecordResponse(
-    xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False))
-  );
+  lRecord := xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False));
+  Result := xeAutomationNewRecordResponseWithParents(lRecord, xeAutomationReadIncludeParentsArg(AArgs));
 end;
 
 function xeAutomationRecordsBaseRecord(const AArgs: TJsonObject): TJsonObject;
@@ -1160,17 +1186,19 @@ begin
 end;
 
 function xeAutomationRecordsMasterOrSelf(const AArgs: TJsonObject): TJsonObject;
+var
+  lRecord: IwbMainRecord;
 begin
-  Result := xeAutomationNewRecordResponse(
-    xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False)).MasterOrSelf
-  );
+  lRecord := xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False)).MasterOrSelf;
+  Result := xeAutomationNewRecordResponseWithParents(lRecord, xeAutomationReadIncludeParentsArg(AArgs));
 end;
 
 function xeAutomationRecordsWinningOverride(const AArgs: TJsonObject): TJsonObject;
+var
+  lRecord: IwbMainRecord;
 begin
-  Result := xeAutomationNewRecordResponse(
-    xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False)).WinningOverride
-  );
+  lRecord := xeAutomationRequireMainRecord(xeAutomationParseLocator(AArgs, True, False)).WinningOverride;
+  Result := xeAutomationNewRecordResponseWithParents(lRecord, xeAutomationReadIncludeParentsArg(AArgs));
 end;
 
 procedure xeAutomationRegisterRecordsCommands;

@@ -91,6 +91,7 @@ function xeAutomationReadOffsetArg(const AArgs: TJsonObject; const AName: string
 function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer;
   const ARecursive: Boolean): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
+function xeAutomationCollectAncestorChain(const ARecord: IwbMainRecord; AMaxDepth: Integer): TArray<IwbMainRecord>;
 function xeAutomationCollectNewMainRecordsInFile(const AFile: IwbFile): TxeAutomationMainRecords;
 function xeAutomationResolveMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
 function xeAutomationResolveOwnedMainRecordInFile(const AFile: IwbFile; const AFormID: string): IwbMainRecord;
@@ -423,6 +424,90 @@ begin
       if Assigned(lAncestor) and (lAncestor.LoadOrderFormID.ToCardinal = AParentFormID) then
         Exit(True);
     end;
+    lContainer := lContainer.Container;
+  end;
+end;
+
+function xeAutomationSameAncestorRecord(const ALeft, ARight: IwbMainRecord): Boolean;
+begin
+  Result := Assigned(ALeft) and Assigned(ARight)
+    and Assigned(ALeft._File) and Assigned(ARight._File)
+    and SameText(ALeft._File.FileName, ARight._File.FileName)
+    and (ALeft.LoadOrderFormID = ARight.LoadOrderFormID);
+end;
+
+procedure xeAutomationAppendAncestor(var AAncestors: TArray<IwbMainRecord>; const AAncestor: IwbMainRecord;
+  const AMaxDepth: Integer);
+begin
+  if not Assigned(AAncestor) then
+    Exit;
+  if Length(AAncestors) >= AMaxDepth then
+    Exit;
+  if (Length(AAncestors) > 0) and xeAutomationSameAncestorRecord(AAncestors[High(AAncestors)], AAncestor) then
+    Exit;
+
+  SetLength(AAncestors, Length(AAncestors) + 1);
+  AAncestors[High(AAncestors)] := AAncestor;
+end;
+
+procedure xeAutomationAppendCellWorldAncestor(var AAncestors: TArray<IwbMainRecord>; const AAncestor: IwbMainRecord;
+  const AMaxDepth: Integer);
+var
+  lElement: IwbElement;
+  lLinkedRecord: IwbMainRecord;
+  lWorldGroup: IwbGroupRecord;
+begin
+  if not Assigned(AAncestor) or not SameText(AAncestor.Signature, 'CELL') then
+    Exit;
+
+  // Exterior CELLs sit below a WRLD-owned GRUP, but xEdit's immediate child-record
+  // container chain can stop at the CELL owner. Bridge that native ownership seam so
+  // REFR ancestry still mirrors the GUI's CELL -> WRLD containment.
+  if Supports(AAncestor.Container, IwbGroupRecord, lWorldGroup) then
+    xeAutomationAppendAncestor(AAncestors, lWorldGroup.ChildrenOf, AMaxDepth);
+  if Length(AAncestors) >= AMaxDepth then
+    Exit;
+
+  // Some CELL records expose their owning worldspace as the Worldspace field rather
+  // than as another reachable container above the child GRUP. Use the real linked
+  // record as a fallback instead of relying on display text.
+  lElement := AAncestor.ElementByName['Worldspace'];
+  if Assigned(lElement) and Supports(lElement.LinksTo, IwbMainRecord, lLinkedRecord)
+    and SameText(lLinkedRecord.Signature, 'WRLD') then
+    xeAutomationAppendAncestor(AAncestors, lLinkedRecord, AMaxDepth);
+end;
+
+function xeAutomationCollectAncestorChain(const ARecord: IwbMainRecord; AMaxDepth: Integer): TArray<IwbMainRecord>;
+var
+  lContainer: IwbContainer;
+  lAncestor: IwbMainRecord;
+  lGroup: IwbGroupRecord;
+begin
+  Result := nil;
+  if not Assigned(ARecord) or (AMaxDepth <= 0) then
+    Exit;
+
+  if AMaxDepth > 16 then
+    AMaxDepth := 16;
+
+  // Reverse navigation must follow xEdit's real ownership chain. ChildGroup GRUPs
+  // often expose their owning MainRecord through ChildrenOf, while ordinary nested
+  // elements can expose a MainRecord directly as the container.
+  lContainer := ARecord.Container;
+  while Assigned(lContainer) and (Length(Result) < AMaxDepth) do begin
+    if Supports(lContainer, IwbMainRecord, lAncestor) then begin
+      xeAutomationAppendAncestor(Result, lAncestor, AMaxDepth);
+      xeAutomationAppendCellWorldAncestor(Result, lAncestor, AMaxDepth);
+    end;
+    if Length(Result) >= AMaxDepth then
+      Break;
+
+    if Supports(lContainer, IwbGroupRecord, lGroup) then begin
+      lAncestor := lGroup.ChildrenOf;
+      xeAutomationAppendAncestor(Result, lGroup.ChildrenOf, AMaxDepth);
+      xeAutomationAppendCellWorldAncestor(Result, lAncestor, AMaxDepth);
+    end;
+
     lContainer := lContainer.Container;
   end;
 end;

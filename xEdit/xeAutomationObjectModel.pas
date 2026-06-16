@@ -34,6 +34,7 @@ type
   function xeAutomationNewObjectResponse(const AFileName, AFormID, APath: string): TJsonObject;
   function xeAutomationNewMutationResult(const AChanged, ADirty: Boolean; const AFileName, AFormID, APath: string): TJsonObject;
   function xeAutomationAddChildrenRelation(const AResponse: TJsonObject): TJsonObject;
+  procedure xeAutomationAppendParentsRelation(AOutResponse: TJsonObject; const AParents: TArray<IwbMainRecord>);
   function xeAutomationBoundedText(const AValue: string; const AMaxLength: Integer = 160): string;
   function xeAutomationElementHasChildren(const AElement: IwbElement): Boolean;
   function xeAutomationElementLocatorPath(const AElement: IwbElement): string;
@@ -219,6 +220,51 @@ begin
     Trim(lLocator.S['formId']),
     Trim(lLocator.S['path'])
   );
+end;
+
+procedure xeAutomationWriteRecordSummary(const ATarget: TJsonObject; const ARecord: IwbMainRecord);
+begin
+  ATarget.S['kind'] := 'record';
+  ATarget.S['signature'] := ARecord.Signature;
+  ATarget.S['formId'] := ARecord.LoadOrderFormID.ToString(False);
+  ATarget.B['isMaster'] := ARecord.IsMaster;
+  ATarget.B['isDeleted'] := ARecord.IsDeleted;
+  ATarget.B['isWinningOverride'] := ARecord.IsWinningOverride;
+  ATarget.I['overrideCount'] := ARecord.OverrideCount;
+
+  if ARecord.CanHaveEditorID and (Trim(ARecord.EditorID) <> '') then
+    ATarget.S['editorId'] := xeAutomationBoundedText(ARecord.EditorID);
+  if ARecord.CanHaveFullName and (Trim(ARecord.FullName) <> '') then
+    ATarget.S['fullName'] := xeAutomationBoundedText(ARecord.FullName);
+  if Trim(ARecord.DisplayNameKey) <> '' then
+    ATarget.S['displayNameKey'] := xeAutomationBoundedText(ARecord.DisplayNameKey);
+end;
+
+procedure xeAutomationAppendParentsRelation(AOutResponse: TJsonObject; const AParents: TArray<IwbMainRecord>);
+var
+  lParents: TJsonArray;
+  lEntry: TJsonObject;
+  lParent: IwbMainRecord;
+begin
+  if not Assigned(AOutResponse) then
+    Exit;
+
+  // The parents relation is opt-in at each command boundary. When requested, emit
+  // an array even for top-level records so callers can distinguish "asked and empty"
+  // from legacy responses where the relation was not requested.
+  lParents := AOutResponse.O['relations'].A['parents'];
+  for lParent in AParents do begin
+    if not Assigned(lParent) then
+      Continue;
+    lEntry := lParents.AddObject;
+    xeAutomationWriteLocator(
+      lEntry.O['locator'],
+      lParent._File.FileName,
+      lParent.LoadOrderFormID.ToString(False),
+      ''
+    );
+    xeAutomationWriteRecordSummary(lEntry.O['object'], lParent);
+  end;
 end;
 
 function xeAutomationBoundedText(const AValue: string; const AMaxLength: Integer): string;
