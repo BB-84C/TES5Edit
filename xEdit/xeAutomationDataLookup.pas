@@ -39,22 +39,27 @@ type
     Files: TxeAutomationFiles;
     Signatures: TwbSignatures;
     BaseSignatures: TwbSignatures;
-    EditorIDPattern: string;
-    DisplayNamePattern: string;
-    FullNamePattern: string;
-    BaseEditorIDPattern: string;
-    BaseDisplayNamePattern: string;
+    EditorIDPatterns: TArray<string>;
+    HasEditorIDPattern: Boolean;
+    DisplayNamePatterns: TArray<string>;
+    HasDisplayNamePattern: Boolean;
+    FullNamePatterns: TArray<string>;
+    HasFullNamePattern: Boolean;
+    BaseEditorIDPatterns: TArray<string>;
+    HasBaseEditorIDPattern: Boolean;
+    BaseDisplayNamePatterns: TArray<string>;
+    HasBaseDisplayNamePattern: Boolean;
     ParentFormID: Cardinal;
     HasParentFormID: Boolean;
-    EditorIDRegex: TRegEx;
+    EditorIDRegexes: TArray<TRegEx>;
     HasEditorIDRegex: Boolean;
-    DisplayNameRegex: TRegEx;
+    DisplayNameRegexes: TArray<TRegEx>;
     HasDisplayNameRegex: Boolean;
-    FullNameRegex: TRegEx;
+    FullNameRegexes: TArray<TRegEx>;
     HasFullNameRegex: Boolean;
-    BaseEditorIDRegex: TRegEx;
+    BaseEditorIDRegexes: TArray<TRegEx>;
     HasBaseEditorIDRegex: Boolean;
-    BaseDisplayNameRegex: TRegEx;
+    BaseDisplayNameRegexes: TArray<TRegEx>;
     HasBaseDisplayNameRegex: Boolean;
     RegexTimeouts: Integer;
     RegexSlotsExhausted: Integer;
@@ -120,6 +125,7 @@ const
   xeAutomationChildGroupPathPrefix = '\Child Group';
   xeAutomationRegexTimeoutMs = 100;
   xeAutomationMaxRegexTasksInFlight = 4;
+  xeAutomationMaxFilterPatternValues = 32;
   xeAutomationChildGroupReferenceSignatures = 'REFR,ACHR,PGRE,PHZD,PARW,PBAR,PBEA,PCON,PFLA,PMIS,LAND,NAVM,PGRD,INFO,DLBR,SCEN,CELL,DIAL,QUST,WRLD';
 
 var
@@ -351,6 +357,27 @@ begin
   end;
 end;
 
+function xeAutomationRegexFieldMatchesAny(const ARegexes: TArray<TRegEx>; const AValue: string;
+  var AFilter: TxeAutomationRecordFilter): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(ARegexes) to High(ARegexes) do
+    if xeAutomationRegexFieldMatches(ARegexes[i], AValue, AFilter) then
+      Exit(True);
+end;
+
+function xeAutomationGlobFieldMatchesAny(const APatterns: TArray<string>; const AValue: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(APatterns) to High(APatterns) do
+    if xeAutomationGlobMatchesCI(AValue, APatterns[i]) then
+      Exit(True);
+end;
+
 function xeAutomationInvalidFieldRequest(const AMessage, AInvalidField: string): ExeAutomationError;
 var
   lDetails: TJsonObject;
@@ -372,18 +399,70 @@ begin
   );
 end;
 
-function xeAutomationReadRegexFilterArg(const AArgs: TJsonObject; const AName: string; out AHasRegex: Boolean): TRegEx;
+function xeAutomationReadStringArrayOrScalar(const AArgs: TJsonObject; const AName: string): TArray<string>;
 var
-  lPattern: string;
+  lValues: TJsonArray;
+  lValue: string;
+  i: Integer;
 begin
-  AHasRegex := False;
-  lPattern := xeAutomationReadStringArg(AArgs, AName);
-  if lPattern = '' then
+  Result := nil;
+  if not Assigned(AArgs) or not AArgs.Contains(AName) then
     Exit;
 
+  case AArgs.Types[AName] of
+    jdtString:
+      begin
+        lValue := Trim(AArgs.S[AName]);
+        if lValue <> '' then begin
+          SetLength(Result, 1);
+          Result[0] := lValue;
+        end;
+      end;
+    jdtArray:
+      begin
+        lValues := AArgs.A[AName];
+        if lValues.Count = 0 then
+          raise xeAutomationInvalidFieldRequest(
+            Format('Automation arg "%s" must contain at least one string', [AName]),
+            AName
+          );
+        if lValues.Count > xeAutomationMaxFilterPatternValues then
+          raise xeAutomationInvalidFieldRequest(
+            Format('Automation arg "%s" must contain no more than %d strings', [AName, xeAutomationMaxFilterPatternValues]),
+            AName
+          );
+
+        SetLength(Result, lValues.Count);
+        for i := 0 to Pred(lValues.Count) do begin
+          if lValues.Types[i] <> jdtString then
+            raise xeAutomationInvalidFieldRequest(
+              Format('Automation arg "%s" entries must be strings', [AName]),
+              AName
+            );
+          Result[i] := Trim(lValues.S[i]);
+        end;
+      end;
+  else
+    raise xeAutomationInvalidFieldRequest(
+      Format('Automation arg field "%s" must be a string or an array of strings', [AName]),
+      AName
+    );
+  end;
+end;
+
+function xeAutomationCompileRegexFilterArgs(const APatterns: TArray<string>; const AName: string; out AHasRegex: Boolean): TArray<TRegEx>;
+var
+  i: Integer;
+begin
+  Result := nil;
+  AHasRegex := Length(APatterns) > 0;
+  if not AHasRegex then
+    Exit;
+
+  SetLength(Result, Length(APatterns));
+  for i := Low(APatterns) to High(APatterns) do
   try
-    Result := TRegEx.Create(lPattern, [roIgnoreCase, roCompiled]);
-    AHasRegex := True;
+    Result[i] := TRegEx.Create(APatterns[i], [roIgnoreCase, roCompiled]);
   except
     on E: Exception do
       // Regex syntax errors are request-boundary failures. Preserve the offending
@@ -395,9 +474,10 @@ begin
   end;
 end;
 
-procedure xeAutomationValidatePatternRegexPair(const AArgs: TJsonObject; const APatternField, ARegexField: string);
+procedure xeAutomationValidatePatternRegexPair(const APatterns, ARegexPatterns: TArray<string>;
+  const APatternField, ARegexField: string);
 begin
-  if (xeAutomationReadStringArg(AArgs, APatternField) <> '') and (xeAutomationReadStringArg(AArgs, ARegexField) <> '') then
+  if (Length(APatterns) > 0) and (Length(ARegexPatterns) > 0) then
     xeAutomationRejectPatternRegexConflict(APatternField, ARegexField);
 end;
 
@@ -806,6 +886,12 @@ begin
 end;
 
 function xeAutomationReadRecordFilter(const AArgs: TJsonObject): TxeAutomationRecordFilter;
+var
+  lEditorIDRegexPatterns: TArray<string>;
+  lDisplayNameRegexPatterns: TArray<string>;
+  lFullNameRegexPatterns: TArray<string>;
+  lBaseEditorIDRegexPatterns: TArray<string>;
+  lBaseDisplayNameRegexPatterns: TArray<string>;
 begin
   if not Assigned(AArgs) then
     raise xeAutomationInvalidRequest('Automation command args are required');
@@ -813,23 +899,36 @@ begin
   Result.Files := xeAutomationRequirePluginFiles(xeAutomationReadStringArrayArg(AArgs, 'files'));
   Result.Signatures := xeAutomationReadSignatureArrayArg(AArgs, 'signatures');
   Result.BaseSignatures := xeAutomationReadSignatureArrayArg(AArgs, 'baseSignatures');
-  Result.EditorIDPattern := xeAutomationReadStringArg(AArgs, 'editorIdPattern');
-  Result.DisplayNamePattern := xeAutomationReadStringArg(AArgs, 'displayNamePattern');
-  Result.FullNamePattern := xeAutomationReadStringArg(AArgs, 'fullNamePattern');
-  Result.BaseEditorIDPattern := xeAutomationReadStringArg(AArgs, 'baseEditorIdPattern');
-  Result.BaseDisplayNamePattern := xeAutomationReadStringArg(AArgs, 'baseDisplayNamePattern');
+  // Public filter fields accept either the historical scalar string or the new
+  // Phase 15G array form; normalize both to arrays before matching records.
+  Result.EditorIDPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'editorIdPattern');
+  Result.HasEditorIDPattern := Length(Result.EditorIDPatterns) > 0;
+  Result.DisplayNamePatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'displayNamePattern');
+  Result.HasDisplayNamePattern := Length(Result.DisplayNamePatterns) > 0;
+  Result.FullNamePatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'fullNamePattern');
+  Result.HasFullNamePattern := Length(Result.FullNamePatterns) > 0;
+  Result.BaseEditorIDPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'baseEditorIdPattern');
+  Result.HasBaseEditorIDPattern := Length(Result.BaseEditorIDPatterns) > 0;
+  Result.BaseDisplayNamePatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'baseDisplayNamePattern');
+  Result.HasBaseDisplayNamePattern := Length(Result.BaseDisplayNamePatterns) > 0;
 
-  xeAutomationValidatePatternRegexPair(AArgs, 'editorIdPattern', 'editorIdRegex');
-  xeAutomationValidatePatternRegexPair(AArgs, 'displayNamePattern', 'displayNameRegex');
-  xeAutomationValidatePatternRegexPair(AArgs, 'fullNamePattern', 'fullNameRegex');
-  xeAutomationValidatePatternRegexPair(AArgs, 'baseEditorIdPattern', 'baseEditorIdRegex');
-  xeAutomationValidatePatternRegexPair(AArgs, 'baseDisplayNamePattern', 'baseDisplayNameRegex');
+  lEditorIDRegexPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'editorIdRegex');
+  lDisplayNameRegexPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'displayNameRegex');
+  lFullNameRegexPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'fullNameRegex');
+  lBaseEditorIDRegexPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'baseEditorIdRegex');
+  lBaseDisplayNameRegexPatterns := xeAutomationReadStringArrayOrScalar(AArgs, 'baseDisplayNameRegex');
 
-  Result.EditorIDRegex := xeAutomationReadRegexFilterArg(AArgs, 'editorIdRegex', Result.HasEditorIDRegex);
-  Result.DisplayNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'displayNameRegex', Result.HasDisplayNameRegex);
-  Result.FullNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'fullNameRegex', Result.HasFullNameRegex);
-  Result.BaseEditorIDRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseEditorIdRegex', Result.HasBaseEditorIDRegex);
-  Result.BaseDisplayNameRegex := xeAutomationReadRegexFilterArg(AArgs, 'baseDisplayNameRegex', Result.HasBaseDisplayNameRegex);
+  xeAutomationValidatePatternRegexPair(Result.EditorIDPatterns, lEditorIDRegexPatterns, 'editorIdPattern', 'editorIdRegex');
+  xeAutomationValidatePatternRegexPair(Result.DisplayNamePatterns, lDisplayNameRegexPatterns, 'displayNamePattern', 'displayNameRegex');
+  xeAutomationValidatePatternRegexPair(Result.FullNamePatterns, lFullNameRegexPatterns, 'fullNamePattern', 'fullNameRegex');
+  xeAutomationValidatePatternRegexPair(Result.BaseEditorIDPatterns, lBaseEditorIDRegexPatterns, 'baseEditorIdPattern', 'baseEditorIdRegex');
+  xeAutomationValidatePatternRegexPair(Result.BaseDisplayNamePatterns, lBaseDisplayNameRegexPatterns, 'baseDisplayNamePattern', 'baseDisplayNameRegex');
+
+  Result.EditorIDRegexes := xeAutomationCompileRegexFilterArgs(lEditorIDRegexPatterns, 'editorIdRegex', Result.HasEditorIDRegex);
+  Result.DisplayNameRegexes := xeAutomationCompileRegexFilterArgs(lDisplayNameRegexPatterns, 'displayNameRegex', Result.HasDisplayNameRegex);
+  Result.FullNameRegexes := xeAutomationCompileRegexFilterArgs(lFullNameRegexPatterns, 'fullNameRegex', Result.HasFullNameRegex);
+  Result.BaseEditorIDRegexes := xeAutomationCompileRegexFilterArgs(lBaseEditorIDRegexPatterns, 'baseEditorIdRegex', Result.HasBaseEditorIDRegex);
+  Result.BaseDisplayNameRegexes := xeAutomationCompileRegexFilterArgs(lBaseDisplayNameRegexPatterns, 'baseDisplayNameRegex', Result.HasBaseDisplayNameRegex);
   Result.RegexTimeouts := 0;
   Result.RegexSlotsExhausted := 0;
 
@@ -864,11 +963,11 @@ begin
     Exit;
   if AFilter.HasParentFormID and not xeAutomationRecordHasAncestor(ARecord, AFilter.ParentFormID) then
     Exit;
-  if (AFilter.EditorIDPattern <> '') and ((not ARecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(ARecord.EditorID, AFilter.EditorIDPattern)) then
+  if AFilter.HasEditorIDPattern and ((not ARecord.CanHaveEditorID) or not xeAutomationGlobFieldMatchesAny(AFilter.EditorIDPatterns, ARecord.EditorID)) then
     Exit;
-  if (AFilter.DisplayNamePattern <> '') and not xeAutomationGlobMatchesCI(ARecord.DisplayName[True], AFilter.DisplayNamePattern) then
+  if AFilter.HasDisplayNamePattern and not xeAutomationGlobFieldMatchesAny(AFilter.DisplayNamePatterns, ARecord.DisplayName[True]) then
     Exit;
-  if (AFilter.FullNamePattern <> '') and ((not ARecord.CanHaveFullName) or not xeAutomationGlobMatchesCI(ARecord.FullName, AFilter.FullNamePattern)) then
+  if AFilter.HasFullNamePattern and ((not ARecord.CanHaveFullName) or not xeAutomationGlobFieldMatchesAny(AFilter.FullNamePatterns, ARecord.FullName)) then
     Exit;
   if AFilter.HasIsMaster and (ARecord.IsMaster <> AFilter.IsMaster) then
     Exit;
@@ -882,14 +981,14 @@ begin
     Exit;
   if AFilter.UseConflictThis and not (ARecord.ConflictThis in AFilter.ConflictThis) then
     Exit;
-  if AFilter.HasEditorIDRegex and ((not ARecord.CanHaveEditorID) or not xeAutomationRegexFieldMatches(AFilter.EditorIDRegex, ARecord.EditorID, AFilter)) then
+  if AFilter.HasEditorIDRegex and ((not ARecord.CanHaveEditorID) or not xeAutomationRegexFieldMatchesAny(AFilter.EditorIDRegexes, ARecord.EditorID, AFilter)) then
     Exit;
-  if AFilter.HasDisplayNameRegex and not xeAutomationRegexFieldMatches(AFilter.DisplayNameRegex, ARecord.DisplayName[True], AFilter) then
+  if AFilter.HasDisplayNameRegex and not xeAutomationRegexFieldMatchesAny(AFilter.DisplayNameRegexes, ARecord.DisplayName[True], AFilter) then
     Exit;
-  if AFilter.HasFullNameRegex and ((not ARecord.CanHaveFullName) or not xeAutomationRegexFieldMatches(AFilter.FullNameRegex, ARecord.FullName, AFilter)) then
+  if AFilter.HasFullNameRegex and ((not ARecord.CanHaveFullName) or not xeAutomationRegexFieldMatchesAny(AFilter.FullNameRegexes, ARecord.FullName, AFilter)) then
     Exit;
 
-  if (Length(AFilter.BaseSignatures) > 0) or AFilter.HasBaseFormID or (AFilter.BaseEditorIDPattern <> '') or (AFilter.BaseDisplayNamePattern <> '') or AFilter.HasBaseEditorIDRegex or AFilter.HasBaseDisplayNameRegex then begin
+  if (Length(AFilter.BaseSignatures) > 0) or AFilter.HasBaseFormID or AFilter.HasBaseEditorIDPattern or AFilter.HasBaseDisplayNamePattern or AFilter.HasBaseEditorIDRegex or AFilter.HasBaseDisplayNameRegex then begin
     // Base-record predicates must resolve the real linked base record; matching the
     // summarized output text would silently diverge from xEdit's actual filter logic.
     if not ARecord.CanHaveBaseRecord or not Supports(ARecord.BaseRecord, IwbMainRecord, lBaseRecord) then
@@ -899,13 +998,13 @@ begin
       Exit;
     if AFilter.HasBaseFormID and (lBaseRecord.LoadOrderFormID <> AFilter.BaseFormID) then
       Exit;
-    if (AFilter.BaseEditorIDPattern <> '') and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationGlobMatchesCI(lBaseRecord.EditorID, AFilter.BaseEditorIDPattern)) then
+    if AFilter.HasBaseEditorIDPattern and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationGlobFieldMatchesAny(AFilter.BaseEditorIDPatterns, lBaseRecord.EditorID)) then
       Exit;
-    if (AFilter.BaseDisplayNamePattern <> '') and not xeAutomationGlobMatchesCI(lBaseRecord.DisplayName[True], AFilter.BaseDisplayNamePattern) then
+    if AFilter.HasBaseDisplayNamePattern and not xeAutomationGlobFieldMatchesAny(AFilter.BaseDisplayNamePatterns, lBaseRecord.DisplayName[True]) then
       Exit;
-    if AFilter.HasBaseEditorIDRegex and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationRegexFieldMatches(AFilter.BaseEditorIDRegex, lBaseRecord.EditorID, AFilter)) then
+    if AFilter.HasBaseEditorIDRegex and ((not lBaseRecord.CanHaveEditorID) or not xeAutomationRegexFieldMatchesAny(AFilter.BaseEditorIDRegexes, lBaseRecord.EditorID, AFilter)) then
       Exit;
-    if AFilter.HasBaseDisplayNameRegex and not xeAutomationRegexFieldMatches(AFilter.BaseDisplayNameRegex, lBaseRecord.DisplayName[True], AFilter) then
+    if AFilter.HasBaseDisplayNameRegex and not xeAutomationRegexFieldMatchesAny(AFilter.BaseDisplayNameRegexes, lBaseRecord.DisplayName[True], AFilter) then
       Exit;
   end;
 
