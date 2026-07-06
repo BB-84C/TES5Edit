@@ -3277,6 +3277,26 @@ begin
   if wbGameMode >= gmTES4 then
     Header.RecordBySignature['HEDR'].Elements[2].NativeValue := wbHEDRNextObjectID;
 
+  // Load-state flags have to be raised before the Starfield auto-master step
+  // below, because AddMasters walks the header's Master Files element via
+  // IsElementEditable / GetElement(0) and expects the file to look "loaded".
+  // Nothing in the aIsLight / aIsMedium blocks that follow reads these fields,
+  // so moving them up is behavior-preserving for the Full flow.
+  flLoadFinished := True;
+  flFormIDsSorted := True;
+  flIndicesActive := True;
+
+  // Starfield forces Starfield.esm as an implicit master. This has to happen
+  // BEFORE aIsLight / aIsMedium flip the header type, because AddMaster gates
+  // on GetModuleType = mtFull for Starfield (wbImplementation.pas ~ line 2486).
+  // Without this reorder, wbNewFile(...aIsLight=True) and (aIsMedium=True)
+  // both throw "Only full modules can add masters in SF1Edit" during creation,
+  // making small/medium ESMs impossible to mint on the automation surface.
+  // The Full flow is unaffected: previously the auto-master ran after the
+  // (no-op) flag block; now it runs before it, with identical net state.
+  if wbStarfieldIsABugInfestedHellhole and wbIsStarfield then
+    AddMasters(['Starfield.esm'{, 'BlueprintShips-Starfield.esm'}]);
+
   if aIsLight then begin
     Header.IsLight := True;
     Include(flModule.miFlags, mfHasLightFlag);
@@ -3286,10 +3306,6 @@ begin
     Header.IsMedium := True;
     Include(flModule.miFlags, mfHasMediumFlag);
   end;
-
-  flLoadFinished := True;
-  flFormIDsSorted := True;
-  flIndicesActive := True;
 
   if flLoadOrder >= 0 then begin
     if wbIsLightSupported or wbPseudoLight or wbIsMediumSupported or wbPseudoMedium or wbPseudoUpdate then begin
@@ -3324,9 +3340,6 @@ begin
       Include(flModule.miFlags, mfLoaded);
     end;
   end;
-
-  if wbStarfieldIsABugInfestedHellhole and wbIsStarfield then
-    AddMasters(['Starfield.esm'{, 'BlueprintShips-Starfield.esm'}]);
 
   BuildOrLoadRef(False);
 end;
