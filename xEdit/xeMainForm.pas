@@ -5709,7 +5709,7 @@ begin
         Stream := fcWhatsNew.CreateReadStream;
         try
           reMain.Lines.LoadFromStream(Stream);
-          // BB-84C automation fork: append the r1..r6 automation changelog after
+          // BB-84C automation fork: append the r1..r7 automation changelog after
           // the upstream What's New RTF so this build's audience can see what is
           // actually different from upstream 4.1.5p without leaving the binary.
           // SelStart/SelLength/SelAttributes are used so the appended block can
@@ -5718,12 +5718,19 @@ begin
             reMain.SelStart := reMain.GetTextLen;
             reMain.SelLength := 0;
             reMain.SelAttributes.Style := [fsBold];
-            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r6' + CRLF + CRLF;
+            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r7' + CRLF + CRLF;
             reMain.SelAttributes.Style := [];
             reMain.SelText :=
               'This binary is the automation-focused fork at github.com/BB-84C/TES5Edit. ' +
               'The summary below covers everything new since upstream xEdit 4.1.5p.' + CRLF + CRLF +
-              'r6 (this release):' + CRLF +
+              'r7 (this release):' + CRLF +
+              '  - records.apply_filter offset/nextOffset pagination: caller pages beyond the 100-record per-page cap by re-issuing with offset=nextOffset until truncated=false; limit>100 is now rejected as invalid_request instead of silently clamping (fixes issue #4).' + CRLF +
+              '  - Starfield unlock on files.create: `small` alias for `esl` (light) header slot, `medium`, and `localized` all supported at creation time. Conflicting `small` + `esl` in the same request is rejected as invalid_request.' + CRLF +
+              '  - Core (shared with upstream) TwbFile.CreateNew reordered: the auto-add of Starfield.esm as master now runs BEFORE the aIsLight/aIsMedium header flip, so wbNewFile with aIsLight or aIsMedium no longer throws "Only full modules can add masters in SF1Edit". The Full-module flow is unchanged (identical net state).' + CRLF +
+              '  - files.set_header_flags exposes `small` alias and `localized` toggle; file summaries and header readbacks now report isLocalized.' + CRLF +
+              '  - Capability contract advanced from 0.20 to 0.21 with supports.applyFilterExtensions.pagination, supports.filesCreate.aliases.smallAliasOf=esl, and updated flag lists on filesCreate and fileHygiene.' + CRLF +
+              '  - Internal version bumped from 4.1.6r6 to 4.1.6r7; update check follows v4.1.6-automation.7 tag.' + CRLF + CRLF +
+              'r6:' + CRLF +
               '  - ChildGroup-aware elements.children: navigate from CELL/WRLD/DIAL/QUST into placed REFR/ACHR/NAVM/INFO/SCEN/...' + CRLF +
               '  - records.create parent-spec: author REFR/ACHR/PGRD/NAVM into CELL Persistent/Temporary, INFO into DIAL, SCEN/DLBR into QUST, exterior CELL at coords into WRLD' + CRLF +
               '  - apply_filter parent-scope predicate and real regex matching (5 *Regex fields, 100ms timeout, multi-pattern OR via scalar-or-array)' + CRLF +
