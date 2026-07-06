@@ -141,15 +141,23 @@ var
   lApplyFilterExtensions: TJsonObject;
   lApplyFilterRegex: TJsonObject;
   lApplyFilterMultiPattern: TJsonObject;
+  lApplyFilterPagination: TJsonObject;
+  lFilesCreateAliases: TJsonObject;
+  lHeaderFlagAliases: TJsonObject;
   lReferencesRecursive: TJsonObject;
   lConflictStatusChildGroup: TJsonObject;
   lCreateParentSpec: TJsonObject;
   lReverseNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 15G (0.19 -> 0.20): apply_filter scalar-or-array multi-pattern OR.
-  // Earlier supports blocks remain stable for older clients that ignore new keys.
-  Result.S['contractVersion'] := '0.20';
+  // Phase 16 (0.20 -> 0.21) adds two additive surfaces at once:
+  //   * records.apply_filter offset-based pagination (issue #4 fix) so agents
+  //     can drain filter matches past the previously silent 100-record cap.
+  //   * Starfield ESM small/localized header-flag aliases + localized readback
+  //     on files.create, files.set_header_flags, and file summaries.
+  // Both are additive: pre-0.21 clients that ignore new keys keep working, and
+  // 0.21-aware wrappers can probe the two new capability blocks below.
+  Result.S['contractVersion'] := '0.21';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
@@ -169,7 +177,15 @@ begin
   Result.O['supports'].O['filesCreate'].A['extensions'].Add('.esl');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esm');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('esl');
+  // Phase 16 (contract 0.21): `small` is a Starfield-native alias of `esl`
+  // (both address the same light-slot bit) and `localized` maps to the native
+  // IwbFile.IsLocalized header bit. Both stay valid for all games; wrappers
+  // can probe supports.filesCreate.aliases to translate names cleanly.
+  Result.O['supports'].O['filesCreate'].A['flags'].Add('small');
   Result.O['supports'].O['filesCreate'].A['flags'].Add('medium');
+  Result.O['supports'].O['filesCreate'].A['flags'].Add('localized');
+  lFilesCreateAliases := Result.O['supports'].O['filesCreate'].O['aliases'];
+  lFilesCreateAliases.S['smallAliasOf'] := 'esl';
   // Local fork: surface that Starfield .esp creation/editing/master-add is
   // enabled natively in this build, even though upstream xEdit blocks it.
   // The "plain-only" mode means we only open the unflagged .esp shape
@@ -253,7 +269,12 @@ begin
   Result.O['supports'].O['fileHygiene'].A['commands'].Add('files.clean_masters');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('esm');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('esl');
+  // Phase 16 (contract 0.21): same alias + localized additions as filesCreate.
+  Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('small');
   Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('medium');
+  Result.O['supports'].O['fileHygiene'].A['headerFlags'].Add('localized');
+  lHeaderFlagAliases := Result.O['supports'].O['fileHygiene'].O['aliases'];
+  lHeaderFlagAliases.S['smallAliasOf'] := 'esl';
   Result.O['supports'].O['fileHygiene'].S['saveBoundary'] := 'explicit_session_save';
 
   // Phase 13 element-mutation expansion. See docs/plans/2026-06-07-xedit-phase13-*.md.
@@ -388,6 +409,26 @@ begin
     Add('baseEditorIdRegex');
     Add('baseDisplayNamePattern');
     Add('baseDisplayNameRegex');
+  end;
+
+  // Phase 16 (contract 0.21) fixes issue #4: records.apply_filter now honors
+  // offset for cursor-style drain. Per-page limit stays capped at 100 so
+  // response envelopes remain predictable regardless of match cardinality,
+  // and total is intentionally omitted -- the underlying scan is early-exit
+  // and cannot cheaply produce a full count without breaking the containment
+  // guarantee. Wrappers page forward with offset+count until truncated=false.
+  lApplyFilterPagination := lApplyFilterExtensions.O['pagination'];
+  lApplyFilterPagination.I['defaultLimit'] := 100;
+  lApplyFilterPagination.I['maxLimit'] := 100;
+  lApplyFilterPagination.I['defaultOffset'] := 0;
+  lApplyFilterPagination.S['cursorField'] := 'nextOffset';
+  lApplyFilterPagination.B['emitsTotal'] := False;
+  with lApplyFilterPagination.A['responseFields'] do begin
+    Add('count');
+    Add('offset');
+    Add('limit');
+    Add('truncated');
+    Add('nextOffset');
   end;
 
   // records.references recursion is opt-in so legacy relationship lookups stay
