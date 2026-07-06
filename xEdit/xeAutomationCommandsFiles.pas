@@ -230,15 +230,24 @@ begin
     raise xeAutomationInvalidRequest('Automation arg "fileName" must end with .esp, .esm, or .esl');
 end;
 
-procedure xeAutomationReadCreateFlags(const AArgs: TJsonObject; out AIsESM, AIsLight, AIsMedium: Boolean);
+procedure xeAutomationReadCreateFlags(const AArgs: TJsonObject; out AIsESM, AIsLight, AIsMedium, AIsLocalized: Boolean);
 var
   lFlags: TJsonObject;
   lName: string;
+  lHasESL: Boolean;
+  lHasSmall: Boolean;
+  lESL: Boolean;
+  lSmall: Boolean;
   i: Integer;
 begin
   AIsESM := False;
   AIsLight := False;
   AIsMedium := False;
+  AIsLocalized := False;
+  lHasESL := False;
+  lHasSmall := False;
+  lESL := False;
+  lSmall := False;
   if not Assigned(AArgs) or not AArgs.Contains('flags') then
     Exit;
 
@@ -250,7 +259,14 @@ begin
     lName := lFlags.Names[i];
     // Flags are intentionally named at the protocol boundary so automation exposes
     // Bethesda plugin header bits deliberately while still rejecting typos.
-    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and not SameText(lName, 'medium') then
+    // Phase 16 (contract 0.21): `small` is a Starfield-native alias of `esl` /
+    // light-slot, and `localized` maps directly to IwbFile.IsLocalized. Both stay
+    // valid outside Starfield too (a Skyrim ESL flagged file is still small in the
+    // engine's vocabulary, and Localized is a game-agnostic header bit), so the
+    // parser is game-mode-agnostic. Aliases are resolved after full parse.
+    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and
+       not SameText(lName, 'small') and not SameText(lName, 'medium') and
+       not SameText(lName, 'localized') then
       raise xeAutomationInvalidRequest(Format('Automation files.create flag "%s" is not supported', [lName]));
     if lFlags.Types[lName] <> jdtBool then
       raise xeAutomationInvalidRequest(Format('Automation files.create flag "%s" must be a boolean', [lName]));
@@ -258,10 +274,27 @@ begin
 
   if lFlags.Contains('esm') then
     AIsESM := lFlags.B['esm'];
-  if lFlags.Contains('esl') then
-    AIsLight := lFlags.B['esl'];
+  if lFlags.Contains('esl') then begin
+    lHasESL := True;
+    lESL := lFlags.B['esl'];
+  end;
+  if lFlags.Contains('small') then begin
+    lHasSmall := True;
+    lSmall := lFlags.B['small'];
+  end;
+  // small/esl target the same light-slot bit; only reject when the caller
+  // explicitly disagrees on the two aliases. Silent OR would let contradictory
+  // requests appear to succeed with whichever alias was parsed last.
+  if lHasESL and lHasSmall and (lESL <> lSmall) then
+    raise xeAutomationInvalidRequest('Automation files.create flags "small" and "esl" are aliases and must not disagree; set only one, or the same boolean on both');
+  if lHasESL then
+    AIsLight := lESL
+  else if lHasSmall then
+    AIsLight := lSmall;
   if lFlags.Contains('medium') then
     AIsMedium := lFlags.B['medium'];
+  if lFlags.Contains('localized') then
+    AIsLocalized := lFlags.B['localized'];
 end;
 
 procedure xeAutomationValidateCreateShape(const AFileName: string; const AIsESM, AIsLight, AIsMedium: Boolean);
@@ -273,8 +306,13 @@ begin
     raise xeAutomationInvalidRequest('Automation .esp files must not set flags.esm true');
   if SameText(lExt, '.esm') and not AIsESM then
     raise xeAutomationInvalidRequest('Automation .esm files must set flags.esm true');
-  if SameText(lExt, '.esm') and AIsLight then
-    raise xeAutomationInvalidRequest('Automation .esm files must not set flags.esl true');
+  // Phase 16 (contract 0.21) Starfield unlock: xEdit's core header-flag mask lets
+  // a .esm carry the small/light bit and Bethesda ships several small .esm files
+  // in Starfield. Refusing the combination at the automation surface prevented
+  // authoring small .esm patches through the CLI even though the SF1 engine
+  // accepts them, so the pre-0.21 rejection is dropped for .esm here. medium
+  // stays orthogonal to esl (mutually exclusive light-vs-medium slot handled
+  // natively by IwbMainRecordStructFlags setters).
   if SameText(lExt, '.esl') and (not AIsESM or not AIsLight) then
     raise xeAutomationInvalidRequest('Automation .esl files must set flags.esm and flags.esl true');
   if AIsLight and AIsMedium then
@@ -345,6 +383,7 @@ var
   lIsESM: Boolean;
   lIsLight: Boolean;
   lIsMedium: Boolean;
+  lIsLocalized: Boolean;
   lInitialMasters: TStringDynArray;
   lRequestedMasters: TStringList;
   lMasterReport: TJsonObject;
@@ -365,7 +404,7 @@ begin
   if (lTemplate <> '') and not SameText(lTemplate, xeAutomationFilesCreateTemplateEmpty) then
     raise xeAutomationInvalidRequest(Format('Automation files.create template "%s" is not supported', [lTemplate]));
 
-  xeAutomationReadCreateFlags(AArgs, lIsESM, lIsLight, lIsMedium);
+  xeAutomationReadCreateFlags(AArgs, lIsESM, lIsLight, lIsMedium, lIsLocalized);
   xeAutomationValidateCreateShape(lFileName, lIsESM, lIsLight, lIsMedium);
   xeAutomationRequireNoExistingNewFile(lFileName);
   if not wbEditAllowed then
@@ -380,6 +419,13 @@ begin
       // post-create file flag so .esm/.esl and explicit ESM plugins match xEdit state.
       if lIsESM or SameText(ExtractFileExt(lFileName), '.esm') or SameText(ExtractFileExt(lFileName), '.esl') then
         lFile.IsESM := True;
+      // Phase 16 (contract 0.21): Localized is orthogonal to esm/esl/medium and
+      // maps directly to the IwbFile.IsLocalized native seam. Apply post-create
+      // so wbNewFile's template selection isn't perturbed. IsLocalized is only
+      // set True when explicitly requested; defaulting to False preserves
+      // existing files.create semantics for pre-0.21 clients.
+      if lIsLocalized then
+        lFile.IsLocalized := True;
 
       lMasterReport := xeAutomationApplyMasterRequests(lFile, lRequestedMasters);
 

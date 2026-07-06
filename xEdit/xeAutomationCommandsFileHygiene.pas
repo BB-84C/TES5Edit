@@ -31,6 +31,10 @@ type
     ESM: Boolean;
     ESL: Boolean;
     Medium: Boolean;
+    // Phase 16 (contract 0.21): Localized exposes IwbFile.IsLocalized on the
+    // hygiene mutation surface so Starfield / SSE / FO4 authors can toggle the
+    // header localization bit through automation instead of the GUI menu.
+    Localized: Boolean;
   end;
 
   TxeAutomationBatchOperation = (xaboSortMasters, xaboCleanMasters);
@@ -50,7 +54,12 @@ begin
   Result := TJsonObject.Create;
   Result.B['esm'] := AFile.IsESM;
   Result.B['esl'] := AFile.IsLight;
+  // Phase 16 (contract 0.21): small mirrors esl since both address the same
+  // light-slot bit; emitting both lets Starfield-native wrappers read `small`
+  // without translating and legacy wrappers keep reading `esl` unchanged.
+  Result.B['small'] := AFile.IsLight;
   Result.B['medium'] := AFile.IsMedium;
+  Result.B['localized'] := AFile.IsLocalized;
 end;
 
 function xeAutomationMasterLoadOrder(const AMaster: IwbFile): Integer;
@@ -133,9 +142,11 @@ begin
 end;
 
 function xeAutomationReadRequestedHeaderFlags(const AArgs: TJsonObject; out AFlags: TxeAutomationHeaderFlags;
-  out AHasESM, AHasESL, AHasMedium: Boolean): TJsonObject;
+  out AHasESM, AHasESL, AHasMedium, AHasLocalized: Boolean): TJsonObject;
 var
   lName: string;
+  lHasSmallAlias: Boolean;
+  lSmallValue: Boolean;
   i: Integer;
 begin
   if not Assigned(AArgs) then
@@ -150,14 +161,23 @@ begin
   AHasESM := False;
   AHasESL := False;
   AHasMedium := False;
+  AHasLocalized := False;
+  lHasSmallAlias := False;
+  lSmallValue := False;
   AFlags.ESM := False;
   AFlags.ESL := False;
   AFlags.Medium := False;
+  AFlags.Localized := False;
   for i := 0 to Pred(Result.Count) do begin
     lName := Result.Names[i];
     // Header flags are named at the protocol boundary so typos still fail while
     // current xEdit-supported plugin flags, including Starfield medium, remain reachable.
-    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and not SameText(lName, 'medium') then
+    // Phase 16 (contract 0.21): `small` is a Starfield-native alias of `esl` /
+    // light-slot; `localized` maps to IwbFile.IsLocalized. Both stay accepted for
+    // all games so wrappers can uniformly toggle them.
+    if not SameText(lName, 'esm') and not SameText(lName, 'esl') and
+       not SameText(lName, 'small') and not SameText(lName, 'medium') and
+       not SameText(lName, 'localized') then
       raise xeAutomationInvalidRequest(Format('Automation files.set_header_flags flag "%s" is not supported', [lName]));
     if Result.Types[lName] <> jdtBool then
       raise xeAutomationInvalidRequest(Format('Automation files.set_header_flags flag "%s" must be a boolean', [lName]));
@@ -168,10 +188,25 @@ begin
     end else if SameText(lName, 'esl') then begin
       AHasESL := True;
       AFlags.ESL := Result.B[lName];
+    end else if SameText(lName, 'small') then begin
+      lHasSmallAlias := True;
+      lSmallValue := Result.B[lName];
     end else if SameText(lName, 'medium') then begin
       AHasMedium := True;
       AFlags.Medium := Result.B[lName];
+    end else if SameText(lName, 'localized') then begin
+      AHasLocalized := True;
+      AFlags.Localized := Result.B[lName];
     end;
+  end;
+
+  // small / esl are aliases; disagreement in the same request is a hard error
+  // rather than a silent OR so wrappers that send both by mistake fail loudly.
+  if AHasESL and lHasSmallAlias and (AFlags.ESL <> lSmallValue) then
+    raise xeAutomationInvalidRequest('Automation files.set_header_flags flags "small" and "esl" are aliases and must not disagree; set only one, or the same boolean on both');
+  if lHasSmallAlias and not AHasESL then begin
+    AHasESL := True;
+    AFlags.ESL := lSmallValue;
   end;
 end;
 
@@ -204,9 +239,11 @@ var
   lHasESM: Boolean;
   lHasESL: Boolean;
   lHasMedium: Boolean;
+  lHasLocalized: Boolean;
   lOldESM: Boolean;
   lOldESL: Boolean;
   lOldMedium: Boolean;
+  lOldLocalized: Boolean;
   lChanged: Boolean;
   lDeniedReason: string;
 begin
@@ -216,7 +253,7 @@ begin
   end;
 
   lFile := xeAutomationRequirePluginFile(xeAutomationRequireStringArg(AArgs, 'file'));
-  xeAutomationReadRequestedHeaderFlags(AArgs, lFlags, lHasESM, lHasESL, lHasMedium);
+  xeAutomationReadRequestedHeaderFlags(AArgs, lFlags, lHasESM, lHasESL, lHasMedium, lHasLocalized);
   // File-header mutations share the central protected-target guard so official,
   // hardcoded, game-master, read-only, and no-edit modes fail the same way as
   // existing record/element mutation commands.
@@ -227,6 +264,7 @@ begin
   lOldESM := lFile.IsESM;
   lOldESL := lFile.IsLight;
   lOldMedium := lFile.IsMedium;
+  lOldLocalized := lFile.IsLocalized;
 
   if lHasESM and (lFile.IsESM <> lFlags.ESM) then
     lFile.IsESM := lFlags.ESM;
@@ -234,8 +272,14 @@ begin
     lFile.IsLight := lFlags.ESL;
   if lHasMedium and (lFile.IsMedium <> lFlags.Medium) then
     lFile.IsMedium := lFlags.Medium;
+  // Phase 16 (contract 0.21): Localized is idempotent and orthogonal to esm/esl/
+  // medium slot selection, so it does not need to interact with the light/medium
+  // mutually-exclusive setter cascade in IwbMainRecordStructFlags.
+  if lHasLocalized and (lFile.IsLocalized <> lFlags.Localized) then
+    lFile.IsLocalized := lFlags.Localized;
 
-  lChanged := (lOldESM <> lFile.IsESM) or (lOldESL <> lFile.IsLight) or (lOldMedium <> lFile.IsMedium);
+  lChanged := (lOldESM <> lFile.IsESM) or (lOldESL <> lFile.IsLight) or
+              (lOldMedium <> lFile.IsMedium) or (lOldLocalized <> lFile.IsLocalized);
 
   Result := TJsonObject.Create;
   try
@@ -243,7 +287,9 @@ begin
     Result.O['oldFlags'] := xeAutomationNewHeaderFlags(lFile);
     Result.O['oldFlags'].B['esm'] := lOldESM;
     Result.O['oldFlags'].B['esl'] := lOldESL;
+    Result.O['oldFlags'].B['small'] := lOldESL;
     Result.O['oldFlags'].B['medium'] := lOldMedium;
+    Result.O['oldFlags'].B['localized'] := lOldLocalized;
     Result.O['newFlags'] := xeAutomationNewHeaderFlags(lFile);
     Result.B['changed'] := lChanged;
     // Hygiene commands deliberately dirty only the daemon's in-memory file state;
