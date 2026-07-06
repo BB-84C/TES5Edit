@@ -77,7 +77,15 @@ type
     UseConflictAll: Boolean;
     ConflictThis: TConflictThisSet;
     UseConflictThis: Boolean;
+    // Phase 16 (contract 0.21): apply_filter is bounded by Limit per page and now
+    // pageable through Offset so agents can drain filter matches past the first
+    // 100 without narrowing the semantic query. Offset counts matched records,
+    // not raw record indices, so pagination composes with signature / regex /
+    // parent scopes without changing what "match" means. Limit stays capped
+    // per-page (xeAutomationApplyFilterMaxLimit) to keep the pipe response
+    // envelope predictable regardless of live match cardinality.
     Limit: Integer;
+    Offset: Integer;
   end;
 
 function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
@@ -93,6 +101,10 @@ function xeAutomationFilterMainRecords(const AArgs: TJsonObject): TxeAutomationB
 function xeAutomationReadSearchLimit(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 100): Integer;
 function xeAutomationReadChildrenLimitArg(const AArgs: TJsonObject; const AName: string = 'limit'; const ADefault: Integer = 200): Integer;
 function xeAutomationReadOffsetArg(const AArgs: TJsonObject; const AName: string = 'offset'; const ADefault: Integer = 0): Integer;
+// Phase 16 apply_filter pagination-specific limit parser: rejects out-of-range
+// requests instead of clamping so wrappers see request-shape errors early, and
+// pins the per-page ceiling at xeAutomationApplyFilterMaxLimit.
+function xeAutomationReadApplyFilterLimitArg(const AArgs: TJsonObject): Integer;
 function xeAutomationCollectOutgoingReferences(const ARecord: IwbMainRecord; const ALimit: Integer;
   const ARecursive: Boolean): TxeAutomationBoundedMainRecordSearch;
 function xeAutomationCollectReferencedByRecords(const ARecord: IwbMainRecord; const ALimit: Integer): TxeAutomationBoundedMainRecordSearch;
@@ -121,6 +133,12 @@ uses
 
 const
   xeAutomationRecordSearchLimit = 100;
+  // Phase 16 apply_filter pagination keeps the per-page ceiling at 100 records
+  // (identical to the pre-0.21 hard clamp) so response envelopes stay bounded
+  // even when Offset lets callers page arbitrarily deep. Elevated max-limit
+  // requests must fail request validation instead of getting silently clamped.
+  xeAutomationApplyFilterMaxLimit = 100;
+  xeAutomationApplyFilterDefaultLimit = 100;
   xeAutomationElementsChildrenMaxLimit = 1000;
   xeAutomationChildGroupPathPrefix = '\Child Group';
   xeAutomationRegexTimeoutMs = 100;
@@ -197,6 +215,12 @@ begin
   Result.B['isESM'] := AFile.IsESM;
   Result.B['isLight'] := AFile.IsLight;
   Result.B['isMedium'] := AFile.IsMedium;
+  // Phase 16 (contract 0.21): isLocalized joins isLight / isMedium as a
+  // round-trippable header-flag readback. Native xEdit already tracks the bit
+  // through IwbFile.IsLocalized; automation was hiding it from summary and
+  // header responses, which broke Starfield localized-ESM authoring flows that
+  // depend on readback to prove the flag survived save+reload.
+  Result.B['isLocalized'] := AFile.IsLocalized;
   Result.B['modified'] := AFile.Modified;
   // Master-list readback is part of the file-state contract: mutation commands
   // may report requested master handling, but callers still need the actual xEdit
@@ -752,6 +776,37 @@ begin
   Result := Integer(lValue);
 end;
 
+function xeAutomationReadApplyFilterLimitArg(const AArgs: TJsonObject): Integer;
+var
+  lValue: Int64;
+begin
+  // apply_filter pagination (contract 0.21) rejects out-of-range limits instead of
+  // silently clamping so wrappers can distinguish "asked for too much" from
+  // "asked for exactly this and got a full page". The per-page ceiling stays at
+  // xeAutomationApplyFilterMaxLimit to protect the named-pipe response envelope
+  // regardless of underlying match cardinality; deeper drains use offset.
+  Result := xeAutomationApplyFilterDefaultLimit;
+  if not Assigned(AArgs) or not AArgs.Contains('limit') then
+    Exit;
+
+  case AArgs.Types['limit'] of
+    jdtInt,
+    jdtLong,
+    jdtULong:
+      lValue := AArgs.L['limit'];
+  else
+    raise xeAutomationInvalidRequest('Automation arg field "limit" must be an integer');
+  end;
+
+  if (lValue < 1) or (lValue > xeAutomationApplyFilterMaxLimit) then
+    raise xeAutomationInvalidRequest(Format(
+      'Automation arg "limit" must be between 1 and %d for records.apply_filter pagination',
+      [xeAutomationApplyFilterMaxLimit]
+    ));
+
+  Result := Integer(lValue);
+end;
+
 function xeAutomationConflictAllFromName(const AName: string): TConflictAll;
 begin
   if SameText(AName, 'caUnknown') then
@@ -948,7 +1003,11 @@ begin
   Result.IsInjected := xeAutomationReadBooleanArg(AArgs, 'isInjected', Result.HasIsInjected);
   Result.ConflictAll := xeAutomationReadConflictAllSetArg(AArgs, 'conflictAll', Result.UseConflictAll);
   Result.ConflictThis := xeAutomationReadConflictThisSetArg(AArgs, 'conflictThis', Result.UseConflictThis);
-  Result.Limit := xeAutomationReadLimitArg(AArgs, 'limit', xeAutomationRecordSearchLimit);
+  // Phase 16: apply_filter pagination reads limit through a stricter validator
+  // that rejects out-of-range values instead of silently clamping, so wrappers
+  // see request-shape errors early. Offset defaults to 0 for backward compat.
+  Result.Limit := xeAutomationReadApplyFilterLimitArg(AArgs);
+  Result.Offset := xeAutomationReadOffsetArg(AArgs);
 end;
 
 function xeAutomationRecordMatchesFilter(const ARecord: IwbMainRecord; var AFilter: TxeAutomationRecordFilter): Boolean;
@@ -1126,6 +1185,7 @@ var
   lFilter: TxeAutomationRecordFilter;
   lFile: IwbFile;
   lRecord: IwbMainRecord;
+  lMatchedSoFar: Integer;
   i, j: Integer;
 begin
   Result.Hits := nil;
@@ -1133,6 +1193,13 @@ begin
   Result.RegexTimeouts := 0;
   Result.RegexSlotsExhausted := 0;
   lFilter := xeAutomationReadRecordFilter(AArgs);
+
+  // Phase 16 apply_filter pagination: offset counts matched records, not raw
+  // record indices, so pagination composes with signature / regex / parent-scope
+  // predicates without shifting semantics. lMatchedSoFar tracks that count.
+  // Truncated becomes True whenever another matching record exists past the page,
+  // enabling nextOffset in the response envelope for cursor-style drain.
+  lMatchedSoFar := 0;
 
   for i := Low(lFilter.Files) to High(lFilter.Files) do begin
     lFile := lFilter.Files[i];
@@ -1142,8 +1209,14 @@ begin
       if not xeAutomationRecordMatchesFilter(lRecord, lFilter) then
         Continue;
 
-      // Apply Filter is intentionally file-scoped and shallow: it streams matching
-      // root records and reports truncation instead of materializing a deeper tree.
+      Inc(lMatchedSoFar);
+      if lMatchedSoFar <= lFilter.Offset then
+        Continue;
+
+      // Once the page is full, one more matching record proves truncation
+      // without materializing it, and we stop scanning to keep filter latency
+      // bounded even when the underlying file spans hundreds of thousands of
+      // records. Callers page forward with offset+count until truncated=false.
       if Length(Result.Hits) >= lFilter.Limit then begin
         Result.Truncated := True;
         Result.RegexTimeouts := lFilter.RegexTimeouts;
@@ -1151,13 +1224,8 @@ begin
         Exit;
       end;
 
-      xeAutomationAddBoundedRecordHit(Result, lRecord);
-      if Result.Truncated then
-      begin
-        Result.RegexTimeouts := lFilter.RegexTimeouts;
-        Result.RegexSlotsExhausted := lFilter.RegexSlotsExhausted;
-        Exit;
-      end;
+      SetLength(Result.Hits, Length(Result.Hits) + 1);
+      Result.Hits[High(Result.Hits)] := lRecord;
     end;
   end;
   Result.RegexTimeouts := lFilter.RegexTimeouts;

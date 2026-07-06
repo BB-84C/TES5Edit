@@ -700,19 +700,36 @@ function xeAutomationRecordsApplyFilter(const AArgs: TJsonObject): TJsonObject;
 var
   lSearch: TxeAutomationBoundedMainRecordSearch;
   lHits: TJsonArray;
+  lOffset: Integer;
+  lLimit: Integer;
   i: Integer;
 begin
   // records.list remains the simple enumerator; the broader Apply Filter contract is
   // isolated here so callers opt into file-scoped glob and status matching explicitly.
+  // Phase 16 (contract 0.21): request-boundary pagination is echoed back through
+  // offset / limit / (optional) nextOffset so cursor-style drain is trivial for
+  // wrappers and total is intentionally NOT emitted -- the underlying scan is
+  // early-exit and cannot cheaply produce a full match count without breaking
+  // the per-page containment guarantee that keeps context bounded.
+  lOffset := xeAutomationReadOffsetArg(AArgs);
+  lLimit := xeAutomationReadApplyFilterLimitArg(AArgs);
   lSearch := xeAutomationFilterMainRecords(AArgs);
 
   Result := TJsonObject.Create;
   Result.B['truncated'] := lSearch.Truncated;
+  Result.I['offset'] := lOffset;
+  Result.I['limit'] := lLimit;
   lHits := Result.A['hits'];
   for i := Low(lSearch.Hits) to High(lSearch.Hits) do
     lHits.Add(xeAutomationNewListedRecordSummary(lSearch.Hits[i]));
 
   Result.I['count'] := lHits.Count;
+  if lSearch.Truncated then
+    // nextOffset is the load-bearing cursor primitive: wrappers can re-issue the
+    // same filter with offset=nextOffset until truncated is false without ever
+    // materializing a total. Omitting nextOffset when not truncated keeps the
+    // "no more pages" terminator unambiguous for pure-JSON clients.
+    Result.I['nextOffset'] := lOffset + lHits.Count;
   if lSearch.RegexTimeouts > 0 then
     Result.I['regexTimeouts'] := lSearch.RegexTimeouts;
   if lSearch.RegexSlotsExhausted > 0 then
