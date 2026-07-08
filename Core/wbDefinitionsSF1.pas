@@ -5840,6 +5840,11 @@ begin
        begin
          Result := (PLongWord(aBasePtr)^ <> $45505954);
        end)
+       // Phase 17E: the String Table pool is bounded by 'Data Size' / the next chunk
+       // signature ($45505954 = 'TYPE'), not by an empty-string terminator. Suppress
+       // the synthetic string-list terminator so copy/edit/save is byte-exact instead
+       // of inserting a phantom NUL before TYPE (see dfNoStringListTerminator).
+       .IncludeFlag(dfNoStringListTerminator)
     ]).SetSummaryKey([2])
       .IncludeFlag(dfCollapsed);
 

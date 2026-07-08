@@ -724,7 +724,18 @@ type
     dfCanContainReflection,
     dfCanContainUnmappedFormID,
     dfIsReflection,
-    dfUnmappedFormID
+    dfUnmappedFormID,
+
+    // Phase 17E: for arrays of variable-size strings whose extent is bounded by a
+    // sibling 'Data Size' field / next-chunk signature (via ShouldInclude) rather
+    // than by an empty-string terminator, suppress the synthetic string-list
+    // terminator the generic array machinery would otherwise append. Without this,
+    // a phantom empty-string terminator (1 NUL) is created on read/assign and
+    // written back before the following chunk, breaking byte-exact round-trip while
+    // the static 'Data Size' field is not recomputed. Set on the Starfield
+    // REFL/RDIF/PCCC/... String Table array (wbREFLSTRT). Appended at the end of the
+    // enum on purpose so existing TwbDefFlag ordinals are not shifted.
+    dfNoStringListTerminator
   );
 
   TwbDefFlags = set of TwbDefFlag;

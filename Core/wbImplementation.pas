@@ -21933,7 +21933,11 @@ begin
         dtStructChapter: Element := TwbChapter.Create(aContainer, aBasePtr, aEndPtr, ValueDef, t);
         dtUnion: Element := wbUnionCreate(aContainer, aBasePtr, aEndPtr, ValueDef, t);
         dtString: begin
-          if Assigned(aBasePtr) and (PAnsiChar(aBasePtr)^ = #0) and (ValueDef.IsVariableSize) then begin
+          // Phase 17E: for dfNoStringListTerminator arrays a leading #0 is a real
+          // (empty) pool string bounded by Data Size / next chunk, not a terminator,
+          // so it must be read as an element rather than consumed and broken on.
+          if Assigned(aBasePtr) and (PAnsiChar(aBasePtr)^ = #0) and (ValueDef.IsVariableSize) and
+             not (dfNoStringListTerminator in ArrayDef.DefFlags) then begin
             Inc(PByte(aBasePtr));
             Break;
           end;
@@ -21965,7 +21969,11 @@ begin
   if Assigned(lFinalBasePtr) and  (NativeUInt(aBasePtr) < NativeUInt(lFinalBasePtr)) then
     aBasePtr := lFinalBasePtr;
 
-  if (ValueDef.DefType = dtString) and (ValueDef.IsVariableSize) then
+  // Phase 17E: dfNoStringListTerminator arrays (Starfield REFL String Table) are
+  // Data-Size / next-chunk-signature bounded, not terminator bounded, so do not
+  // append the phantom empty-string terminator that would corrupt the byte stream.
+  if (ValueDef.DefType = dtString) and (ValueDef.IsVariableSize) and
+     not (dfNoStringListTerminator in ArrayDef.DefFlags) then
     Element := TwbStringListTerminator.Create(aContainer);
 
   ArrayDef.AfterLoad(aContainer);
@@ -22249,6 +22257,10 @@ begin
     Exit; {will be checked in NotifyChangedInternal}
 
   ArrayDef := vbValueDef as IwbArrayDef;
+  // Phase 17E: Data-Size / next-chunk-signature bounded string arrays
+  // (Starfield REFL String Table) must never carry a synthetic terminator.
+  if dfNoStringListTerminator in ArrayDef.DefFlags then
+    Exit;
   if not ArrayDef.IsVariableSize then
     Exit;
   if ArrayDef.Element.DefType <> dtString then
