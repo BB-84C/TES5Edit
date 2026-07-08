@@ -5925,6 +5925,33 @@ begin
       .IncludeFlag(dfIsReflection)
       .IncludeFlag(dfNoReport);
 
+  // Phase 17C-1: consolidated helper for the 4 inline REFL-style subrecord defs
+  // (PCCC/PTCL/PSDF/XNSE) that share the [BETH,STRT,TYPE,CLAS,wbUnknown] body and
+  // the standard 6-flag reflection policy. Captures wbREFLBETH/STRT/TYPE/CLAS from
+  // the enclosing DefineSF1 scope. wbREFL and wbRDIF above have an OBJT/DIFF slot
+  // and are deliberately not routed through this helper. See ROADMAP.md Phase 17C.
+  var wbREFLStruct :=
+    function(aSig: TwbSignature): IwbRecordMemberDef
+    begin
+      // Return type matches what wbStruct(...).IncludeFlag(...) chain produces
+      // from the compiler's view (IncludeFlag is declared on IwbRecordMemberDef
+      // returning IwbRecordMemberDef{Self}). Assignment sites accept any
+      // IwbValueDef-descended interface, so IwbRecordMemberDef is sufficient
+      // and matches the type existing wbREFL/wbRDIF inline vars infer to.
+      Result := wbStruct(aSig, 'Reflection', [
+        wbREFLBETH,
+        wbREFLSTRT,
+        wbREFLTYPE,
+        wbREFLCLAS,
+        wbUnknown
+      ]).IncludeFlag(dfCanContainFormID)
+        .IncludeFlag(dfCanContainReflection)
+        .IncludeFlag(dfDontAssign)
+        .IncludeFlag(dfInternalEditOnly)
+        .IncludeFlag(dfIsReflection)
+        .IncludeFlag(dfNoReport);
+    end;
+
   var wbBaseFormComponents: IwbRecordMemberDef;
 
   var wbLinksToBluePrintComponent:TwbLinksToCallback  := function(const aElement: IwbElement): IwbElement
@@ -6591,18 +6618,7 @@ begin
         ]),
         //HoudiniData_Component
         wbRStruct('Component Data - Houdini Data', [
-          wbStruct(PCCC, 'Reflection', [
-            wbREFLBETH,
-            wbREFLSTRT,
-            wbREFLTYPE,
-            wbREFLCLAS,
-            wbUnknown
-          ]).IncludeFlag(dfCanContainFormID)
-            .IncludeFlag(dfCanContainReflection)
-            .IncludeFlag(dfDontAssign)
-            .IncludeFlag(dfInternalEditOnly)
-            .IncludeFlag(dfIsReflection)
-            .IncludeFlag(dfNoReport)
+          wbREFLStruct(PCCC)
         ]),
         //BGSPropertySheet_Component
         wbRStruct('Component Data - Property Sheet', [
@@ -6610,18 +6626,7 @@ begin
         ]),
         //ParticleSystem_Component
         wbRStruct('Component Data - Particle System', [
-          wbStruct(PTCL, 'Reflection', [
-            wbREFLBETH,
-            wbREFLSTRT,
-            wbREFLTYPE,
-            wbREFLCLAS,
-            wbUnknown
-          ]).IncludeFlag(dfCanContainFormID)
-            .IncludeFlag(dfCanContainReflection)
-            .IncludeFlag(dfDontAssign)
-            .IncludeFlag(dfInternalEditOnly)
-            .IncludeFlag(dfIsReflection)
-            .IncludeFlag(dfNoReport)
+          wbREFLStruct(PTCL)
         ]),
         //BGSLodOwner_Component
         //BGSEffectSequenceComponent
@@ -10169,18 +10174,7 @@ begin
     wbGenericModel(True),
     wbInteger(DATA, 'Index', itU32).SetRequired,
     wbFormIDCk(LNAM, 'Light', [LIGH]),
-    wbStruct(PSDF, 'Reflection', [
-      wbREFLBETH,
-      wbREFLSTRT,
-      wbREFLTYPE,
-      wbREFLCLAS,
-      wbUnknown
-    ]).IncludeFlag(dfCanContainFormID)
-      .IncludeFlag(dfCanContainReflection)
-      .IncludeFlag(dfDontAssign)
-      .IncludeFlag(dfInternalEditOnly)
-      .IncludeFlag(dfIsReflection)
-      .IncludeFlag(dfNoReport),
+    wbREFLStruct(PSDF),
     wbStruct(DNAM, 'Data', [
       wbInteger('Master Particle System Cap', itU16),
       wbInteger('Flags', itU16, wbEnum([
@@ -15695,18 +15689,7 @@ begin
       wbUnused(3)
     ], cpNormal, False, nil, 5),
 
-    wbStruct(XNSE, 'Reflection', [
-      wbREFLBETH,
-      wbREFLSTRT,
-      wbREFLTYPE,
-      wbREFLCLAS,
-      wbUnknown
-    ]).IncludeFlag(dfCanContainFormID)
-      .IncludeFlag(dfCanContainReflection)
-      .IncludeFlag(dfDontAssign)
-      .IncludeFlag(dfInternalEditOnly)
-      .IncludeFlag(dfIsReflection)
-      .IncludeFlag(dfNoReport),
+    wbREFLStruct(XNSE),
 
     wbFormIDCk(XATR, 'Attach Ref', sigReferences),
 
