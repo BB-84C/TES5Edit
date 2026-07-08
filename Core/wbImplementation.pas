@@ -416,6 +416,7 @@ type
     procedure BeforeActualRemove; virtual;
     function CanContainFormIDs: Boolean; virtual;
     function ContainsReflection: Boolean; virtual;
+    function ContainsUnsafeReflection: Boolean; virtual;
     function ContainsUnmappedFormID: Boolean; virtual;
     function AddIfMissing(const aElement: IwbElement; aAsNew, aDeepCopy : Boolean; const aPrefixRemove, aSuffixRemove, aPrefix, aSuffix: string; aAllowOverwrite: Boolean): IwbElement;
     function AddIfMissingInternal(const aElement: IwbElement; aAsNew, aDeepCopy : Boolean; const aPrefixRemove, aSuffixRemove, aPrefix, aSuffix: string; aAllowOverwrite: Boolean): IwbElement; virtual;
@@ -554,6 +555,7 @@ type
     function _Release: Integer; override; stdcall;
 
     function ContainsReflection: Boolean; override;
+    function ContainsUnsafeReflection: Boolean; override;
     function ContainsUnmappedFormID: Boolean; override;
 
     {---IwbContainerElementRef---}
@@ -2483,7 +2485,7 @@ end;
 procedure TwbFile.AddMaster(const aFile: IwbFile);
 begin
   if not (fsScanning in flStates) then
-    if wbStarfieldIsABugInfestedHellhole and wbComplexFileFileID then begin
+    if wbStarfieldReverseEngineeringIncomplete and wbComplexFileFileID then begin
       if GetModuleType <> mtFull then
         raise Exception.Create('Only full modules can add masters in ' + wbAppName + wbToolName);
       if aFile.ModuleType <> mtFull then
@@ -3294,7 +3296,7 @@ begin
   // making small/medium ESMs impossible to mint on the automation surface.
   // The Full flow is unaffected: previously the auto-master ran after the
   // (no-op) flag block; now it runs before it, with identical net state.
-  if wbStarfieldIsABugInfestedHellhole and wbIsStarfield then
+  if wbStarfieldReverseEngineeringIncomplete and wbIsStarfield then
     AddMasters(['Starfield.esm'{, 'BlueprintShips-Starfield.esm'}]);
 
   if aIsLight then begin
@@ -3444,7 +3446,7 @@ begin
           if Assigned(miFile) then
             AddMaster(_File);
 
-  if wbStarfieldIsABugInfestedHellhole and wbIsStarfield then
+  if wbStarfieldReverseEngineeringIncomplete and wbIsStarfield then
     AddMasters(['Starfield.esm'{, 'BlueprintShips-Starfield.esm'}]);
 
   BuildOrLoadRef(False);
@@ -4295,7 +4297,7 @@ begin
       ((not (fsIsCompareLoad in flStates)) or (fsIsDeltaPatch in flStates))
     );
 
-  if wbIsStarfield and wbStarfieldIsABugInfestedHellhole then
+  if wbIsStarfield and wbStarfieldReverseEngineeringIncomplete then
     if [fsIsGameMaster, fsIsHardcoded, fsIsOfficial] * flStates <> [] then
       Exit(False);
 end;
@@ -5387,7 +5389,7 @@ begin
 
     if wbComplexFileFileID then begin
 
-      if wbStarfieldIsABugInfestedHellhole then begin
+      if wbStarfieldReverseEngineeringIncomplete then begin
 
         for var lMasterIdx := 0 to Pred(GetMasterCount(True)) do begin
           var lMaster := GetMaster(lMasterIdx, True);
@@ -7009,6 +7011,81 @@ begin
 
   for var lElementIdx := 0 to Pred(GetElementCount) do begin
     Result := cntElements[lElementIdx].ContainsReflection;
+    if Result then
+      Exit;
+  end;
+end;
+
+function wbReflectionElementContainsFormRef(const aReflElement: IwbElement): Boolean;
+// Content-aware safety check for a single Starfield reflection stream (REFL/RDIF/
+// PCCC/PTCL/PSDF/XNSE). Returns True (UNSAFE) if the stream's decoded CLAS declares
+// any field whose 'Field Type' is the reflection 'Ref' sentinel ($FFFFFF05) - i.e. a
+// game form-reference that would need remapping on cross-plugin copy. Returns True
+// (fail-closed) if the CLAS cannot be decoded/walked. Returns False (verbatim-safe)
+// only when every declared field is a non-Ref type. 'Ref' is the authoritative form-
+// reference wire-type: proven against the live BSReflection registry (registry
+// typeKind==9 form-refs serialize as 'Ref'). See
+// .opencode/artifacts/issue5-pndt-reflection-copy/multi-lens/safe-copy-design-2026-07-08.md.
+const
+  cReflRefType = Integer($FFFFFF05); // 'Ref' per wbREFLStringToStr
+var
+  lContainer : IwbContainerElementRef;
+  lClasses   : IwbContainerElementRef;
+  lClass     : IwbContainerElementRef;
+  lFields    : IwbContainerElementRef;
+  lField     : IwbContainerElementRef;
+begin
+  Result := True; // fail-closed default
+  if not Supports(aReflElement, IwbContainerElementRef, lContainer) then
+    Exit;
+
+  var lClassesElement := lContainer.ElementByPath['Classes'];
+  if not Assigned(lClassesElement) then
+    Exit; // no decodable class table -> cannot verify -> unsafe
+  if not Supports(lClassesElement, IwbContainerElementRef, lClasses) then
+    Exit;
+
+  for var lClassIdx := 0 to Pred(lClasses.ElementCount) do begin
+    if not Supports(lClasses.Elements[lClassIdx], IwbContainerElementRef, lClass) then
+      Exit; // fail-closed
+
+    var lFieldsElement := lClass.ElementByPath['Fields'];
+    if not Assigned(lFieldsElement) then
+      Continue; // class with no declared fields cannot contribute a Ref
+    if not Supports(lFieldsElement, IwbContainerElementRef, lFields) then
+      Exit;
+
+    for var lFieldIdx := 0 to Pred(lFields.ElementCount) do begin
+      if not Supports(lFields.Elements[lFieldIdx], IwbContainerElementRef, lField) then
+        Exit;
+      var lFieldType := lField.ElementNativeValues['Field Type'];
+      if VarIsOrdinal(lFieldType) and (Integer(lFieldType) = cReflRefType) then
+        Exit(True); // form-reference present -> unsafe
+    end;
+  end;
+
+  Result := False; // all classes/fields walked, no Ref found -> verbatim-safe
+end;
+
+function TwbContainer.ContainsUnsafeReflection: Boolean;
+begin
+  Result := False;
+
+  var lDef := GetDef;
+  if not Assigned(lDef) or not (dfCanContainReflection in lDef.DefFlags) then
+    Exit;
+
+  // If this container IS a reflection stream, decide by inspecting its CLAS for form-
+  // references. Do NOT delegate to the flag-only leaf check (that treats every
+  // reflection stream as present, which is the wrong signal for safety).
+  if dfIsReflection in lDef.DefFlags then begin
+    Result := wbReflectionElementContainsFormRef(Self);
+    Exit;
+  end;
+
+  var SelfRef := Self as IwbContainerElementRef;
+  for var lElementIdx := 0 to Pred(GetElementCount) do begin
+    Result := cntElements[lElementIdx].ContainsUnsafeReflection;
     if Result then
       Exit;
   end;
@@ -9130,7 +9207,7 @@ var
 begin
   Result := nil;
 
-  if wbIsStarfield and wbStarfieldIsABugInfestedHellhole then
+  if wbIsStarfield and wbStarfieldReverseEngineeringIncomplete then
     if (aIndex = wbAssignThis) and (GetSignature = 'PKIN') then begin
       var lMainRecord: IwbMainRecord;
       if Supports(aElement, IwbMainRecord, lMainRecord) then begin
@@ -9724,7 +9801,7 @@ end;
 
 function TwbMainRecord.CanAssignInternal(aIndex: Integer; const aElement: IwbElement; aCheckDontShow: Boolean): Boolean;
 begin
-  if wbIsStarfield and wbStarfieldIsABugInfestedHellhole then
+  if wbIsStarfield and wbStarfieldReverseEngineeringIncomplete then
     if (aIndex = wbAssignThis) and (GetSignature = 'PKIN') then begin
       var lMainRecord: IwbMainRecord;
       if Supports(aElement, IwbMainRecord, lMainRecord) then begin
@@ -16848,7 +16925,8 @@ var
       if aSource.LoadOrderFormID.ToCardinal = $25 then
         Exit;
 
-      if aElement.ContainsReflection then begin
+      if aElement.ContainsReflection
+        and (wbStarfieldReverseEngineeringIncomplete or aElement.ContainsUnsafeReflection) then begin
         var lSourceName := aElement.FullPath;
         var lTargetName := GetFullPath;
         wbProgress('Error adding [%s] to [%s]: %s', [lSourceName, lTargetName, 'Source contains Reflection and can not be copied']);
@@ -18809,7 +18887,8 @@ begin
   BeginUpdate;
   try
     try
-      if Assigned(aElement) and aElement.ContainsReflection then
+      if Assigned(aElement) and aElement.ContainsReflection
+        and (wbStarfieldReverseEngineeringIncomplete or aElement.ContainsUnsafeReflection) then
         if not Supports(aElement, IwbMainRecord) or Supports(Self, IwbMainRecord) then
           raise Exception.Create(aElement.Name + ' contains Reflection and can not be assigned');
 
@@ -18940,7 +19019,8 @@ begin
   Result := False;
   try
   {$ENDIF}
-    if Assigned(aElement) and aElement.ContainsReflection then
+    if Assigned(aElement) and aElement.ContainsReflection
+      and (wbStarfieldReverseEngineeringIncomplete or aElement.ContainsUnsafeReflection) then
       if not Supports(aElement, IwbMainRecord) or Supports(Self, IwbMainRecord) then
         Exit(False);
 
@@ -19061,6 +19141,15 @@ begin
     Exit;
 
   Result := True;
+end;
+
+function TwbElement.ContainsUnsafeReflection: Boolean;
+begin
+  // A base (non-container) element cannot expose a CLAS to verify. If it is itself a
+  // reflection value leaf, fail closed (unsafe). Container reflection streams are
+  // handled by the TwbContainer override, which inspects the CLAS.
+  var lDef := GetDef;
+  Result := Assigned(lDef) and (dfIsReflection in lDef.DefFlags);
 end;
 
 function TwbElement.ContainsUnmappedFormID: Boolean;

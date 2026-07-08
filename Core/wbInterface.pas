@@ -396,7 +396,7 @@ var
   wbMOProfile                        : string;
   wbMOHookFile                       : string;
 
-  wbStarfieldIsABugInfestedHellhole  : Boolean    = True;
+  wbStarfieldReverseEngineeringIncomplete  : Boolean    = True;
   wbRedPill                          : Boolean    = False;
   wbAlwaysLoadGameMaster             : Boolean    = True;
 
@@ -1137,6 +1137,7 @@ type
     procedure AddReferencedFromID(aFormID: TwbFormID);
     function CanContainFormIDs: Boolean;
     function ContainsReflection: Boolean;
+    function ContainsUnsafeReflection: Boolean;
     function ContainsUnmappedFormID: Boolean;
     function GetLinksTo: IwbElement;
     procedure SetLinksTo(const aElement: IwbElement);

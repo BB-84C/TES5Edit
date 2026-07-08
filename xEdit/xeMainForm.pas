@@ -15744,7 +15744,8 @@ begin
 
   mniNavCopyAsOverride.Visible := mniNavCheckForErrors.Visible and not mniNavAddMasters.Visible;
 
-  if IsMainRecord and MainRecord.ContainsReflection then
+  if IsMainRecord and MainRecord.ContainsReflection
+     and (wbStarfieldReverseEngineeringIncomplete or MainRecord.ContainsUnsafeReflection) then
     mniNavCopyAsOverride.Visible := False;
 
   mniNavCopyAsOverrideWithOverwrite.Visible := mniNavCopyAsOverride.Visible;

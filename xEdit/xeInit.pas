@@ -963,14 +963,14 @@ begin
     ToolSources        := [tsPlugins];
     wbLightName        := 'Small';
 
-    if    wbStarfieldIsABugInfestedHellhole
+    if    wbStarfieldReverseEngineeringIncomplete
       and FindCmdLineSwitch('ItJustWorksTM')
       and FindCmdLineSwitch('ThisIsFine')
       and FindCmdLineSwitch('GiveMeTheRedPill')
     then begin
       VersionString.Title := 'ItJustWorks[TM] Edition';
       wbRedPill := True;
-      wbStarfieldIsABugInfestedHellhole := False; //you wish... but lets pretend
+      wbStarfieldReverseEngineeringIncomplete := False; // RedPill override: treat the reflection format as decoded enough to lift the conservative Starfield restrictions
     end;
   end
 
@@ -1391,7 +1391,7 @@ begin
   if FindCmdLineSwitch('MoreInfoForIndex') then
     wbMoreInfoForIndex := true;
 
-  if not (wbIsStarfield and wbStarfieldIsABugInfestedHellhole) then
+  if not (wbIsStarfield and wbStarfieldReverseEngineeringIncomplete) then
     if wbIKnowWhatImDoing and FindCmdLineSwitch('IKnowIllBreakMyGameWithThis') then
       wbAllowEditGameMaster := True;
 

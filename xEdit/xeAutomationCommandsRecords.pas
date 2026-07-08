@@ -1031,7 +1031,8 @@ begin
 
   // This mirrors the nil-return gates in TwbGroupRecord.AddIfMissingInternal.CopyMainRecord.
   // Keep this diagnosis in sync if the planned Phase 17 native gates change.
-  if wbIsStarfield and Assigned(ACopySource) and ACopySource.ContainsReflection then
+  if wbIsStarfield and Assigned(ACopySource) and ACopySource.ContainsReflection
+     and (wbStarfieldReverseEngineeringIncomplete or ACopySource.ContainsUnsafeReflection) then
     Exit('Source contains Reflection and can not be copied');
 
   if Assigned(ACopySource) and ACopySource.ContainsUnmappedFormID then

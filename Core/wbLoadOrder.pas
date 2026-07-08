@@ -611,7 +611,7 @@ begin
   with TwbModuleInfo.AddNewModule('<new file>.esm', True)^ do begin
     Include(miFlags, mfHasESMFlag);
     Include(miFlags, mfIsESM);
-    if not (wbStarfieldIsABugInfestedHellhole and wbIsStarfield) then begin
+    if not (wbStarfieldReverseEngineeringIncomplete and wbIsStarfield) then begin
       if wbIsLightSupported then begin
         with TwbModuleInfo.AddNewModule('<new file>.esm', True)^ do begin
           Include(miFlags, mfHasLightFlag);
