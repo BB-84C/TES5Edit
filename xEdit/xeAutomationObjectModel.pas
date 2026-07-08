@@ -159,10 +159,9 @@ begin
   if ARequireFormID and (Result.FormID = '') then
     raise xeAutomationInvalidRequest('Automation locator must include formId');
 
-  // For daemon object traversal, an empty string is a valid record-root path. The
-  // contract requirement here is field presence, not non-empty content.
-  if ARequirePath and not AArgs.Contains('path') then
-    raise xeAutomationInvalidRequest('Automation locator must include path');
+  // Contract 0.22 makes locator path optional: an omitted path is the same
+  // record-root locator as path:"". Keep parsing centralized so every command
+  // using locators gets that default without changing resolver semantics.
 end;
 
 function xeAutomationParseLocator(const AArgs: TJsonObject; const ARequirePath: Boolean): TxeAutomationLocator; overload;

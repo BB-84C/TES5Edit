@@ -1025,8 +1025,23 @@ begin
   end;
 end;
 
-function xeAutomationIdentifyCopiedMainRecord(const ACopiedElement: IwbElement; const ASourceRecord: IwbMainRecord;
-  const ATargetFile: IwbFile; const AAsNew: Boolean): IwbMainRecord;
+function xeAutomationCopyIntoNilCopyHint(const ACopySource: IwbElement; const ATargetFile: IwbFile): string;
+begin
+  Result := 'Automation records.copy_into could not identify the copied main record';
+
+  // This mirrors the nil-return gates in TwbGroupRecord.AddIfMissingInternal.CopyMainRecord.
+  // Keep this diagnosis in sync if the planned Phase 17 native gates change.
+  if wbIsStarfield and Assigned(ACopySource) and ACopySource.ContainsReflection then
+    Exit('Source contains Reflection and can not be copied');
+
+  if Assigned(ACopySource) and ACopySource.ContainsUnmappedFormID then
+    if Assigned(ATargetFile) and (ATargetFile.FileStates * [fsIsGameMaster, fsIsHardcoded] = []) then
+      if (ATargetFile.MasterCount[True] < 1) or (ATargetFile.Masters[0, True].FileStates * [fsIsGameMaster] = []) then
+        Exit('Source contains Unmapped FormID and can not be copied into a module which does not have the game master as its first master');
+end;
+
+function xeAutomationIdentifyCopiedMainRecord(const ACopiedElement: IwbElement; const ACopySource: IwbElement;
+  const ASourceRecord: IwbMainRecord; const ATargetFile: IwbFile; const AAsNew: Boolean): IwbMainRecord;
 var
   lCopiedGroup: IwbGroupRecord;
 begin
@@ -1048,7 +1063,10 @@ begin
     Supports(lCopiedGroup.ChildrenOf, IwbMainRecord, Result);
 
   if not Assigned(Result) then
-    raise xeAutomationMutationNotAllowed('Automation records.copy_into could not identify the copied main record');
+    if Assigned(ACopiedElement) then
+      raise xeAutomationMutationNotAllowed('Automation records.copy_into could not identify the copied main record')
+    else
+      raise xeAutomationMutationNotAllowed(xeAutomationCopyIntoNilCopyHint(ACopySource, ATargetFile));
 end;
 
 function xeAutomationRecordsCopyInto(const AArgs: TJsonObject): TJsonObject;
@@ -1165,7 +1183,7 @@ begin
         lEditorIDSuffix,
         lOverwrite
       );
-      lCopiedRecord := xeAutomationIdentifyCopiedMainRecord(lCopiedElement, lSourceRecord, lTargetFile, lAsNew);
+      lCopiedRecord := xeAutomationIdentifyCopiedMainRecord(lCopiedElement, lCopySource, lSourceRecord, lTargetFile, lAsNew);
     except
       on E: ExeAutomationError do
         raise;

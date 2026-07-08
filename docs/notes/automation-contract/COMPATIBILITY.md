@@ -4,7 +4,7 @@
 
 This subsystem makes promises along these axes; each axis has its own compatibility tier:
 
-| Axis | Stability tier (at 0.20) | Notes |
+| Axis | Stability tier (at 0.22) | Notes |
 |---|---|---|
 | Wire protocol envelope shape | Frozen | `{ok, result}` and `{ok, error: {code, details}}` shapes are stable. |
 | `system.capabilities` schema | Additive-only | New fields under `supports.*` are additive; clients ignore unknown keys. |
@@ -15,7 +15,7 @@ This subsystem makes promises along these axes; each axis has its own compatibil
 
 ## Contract Version
 
-Current: **0.20** (Phase 15G — apply_filter scalar-or-array multi-pattern OR)
+Current: **0.22** (bounded daemon-surface compatibility fixes; Phase 17 runtime verification pending)
 
 ### Additive history
 
@@ -32,6 +32,35 @@ Current: **0.20** (Phase 15G — apply_filter scalar-or-array multi-pattern OR)
 - **0.18: Phase 15E** — extends `supports.createParentSpec` and optional `records.create.parent` for WRLD persistent/exterior CELL authoring
 - **0.19: Phase 15F** — `supports.reverseNavigation` and optional `includeParents:true` on read verbs to emit `relations.parents`
 - **0.20: Phase 15G** — `supports.applyFilterExtensions.multiPattern` and scalar-or-array OR semantics for `records.apply_filter` identifier pattern/regex fields
+- **0.21: Phase 16** — `records.apply_filter` offset pagination, `limit>100` rejection, and Starfield small/localized header-flag capability updates
+- **0.22: bounded daemon-surface fixes** — locator `path` omission defaults to `""`, and `records.copy_into` reports native Reflection / Unmapped FormID nil-copy reasons when diagnosed
+
+## 0.22 (2026-07-08) — locator default + copy_into nil-copy diagnostics
+
+- Changed: locator `path` is no longer field-presence-required. Omitted `path`
+  defaults to the record root and resolves identically to `path:""`.
+- Preserved: `file` remains required, `formId` remains optional unless a command
+  explicitly requires record identity, and resolver semantics are otherwise
+  unchanged.
+- Changed: when `records.copy_into` receives nil from native `wbCopyElementToFile`,
+  it still returns `mutation_not_allowed` but now forwards the diagnosed native
+  Starfield Reflection refusal or Unmapped FormID / missing-game-master refusal
+  instead of collapsing both to the generic copied-record identification message.
+- Preserved: unrecognized nil-copy failures keep the pre-0.22 generic message.
+
+## 0.21 (2026-07-06) — Phase 16 apply_filter pagination + Starfield flag capabilities
+
+- Added: `records.apply_filter.limit` defaults to 100 and is capped at 100 hits
+  per page. `limit > 100` is rejected as `invalid_request` instead of silently
+  clamping.
+- Added: `records.apply_filter.offset` counts matched records, not raw record
+  indices. Responses include `offset`, `limit`, `truncated`, and `nextOffset`
+  when another page is available.
+- Added: `supports.applyFilterExtensions.pagination` documents the cursor field,
+  max/default limit, over-cap rejection, and matched-record offset semantics.
+- Added: `supports.filesCreate.flags` and `supports.fileHygiene.headerFlags`
+  advertise `small` and `localized`; `small` is an alias of `esl` for the
+  Starfield light slot, and summaries/header readbacks expose localized state.
 
 ## 0.20 (2026-06-15) — Phase 15G apply_filter multi-pattern OR
 
@@ -200,25 +229,25 @@ Frozen Phase 6E `supports.jobs.kinds` membership and order unchanged.
 Note: clients should not assume new `object.kind` enum values are exhaustive.
 Forward compatibility requires that unknown `kind` values are ignored.
 
-## What `0.20` promises
+## What `0.22` promises
 
-The `0.20` public wrapper-facing contract surface comprises:
+The `0.22` public wrapper-facing contract surface comprises:
 
 - **Wire envelope shapes**: `{ok: true, result: <value>}` for success; `{ok: false, error: {code: <string>, details: <object>}}` for failure. Both shapes are stable across `0.x` versions.
-- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, and `supports.reverseNavigation` blocks introduced through 0.20.
+- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, and `supports.reverseNavigation` blocks introduced through 0.22.
 - **`supports.jobs.kinds` membership and order**: byte-for-byte preserved from the earlier freeze. The exact list is enumerated in `contract-reference.md`. Adding, removing, or reordering any kind is a major bump.
 - **Per-code `error.details` shape for the 7 lifecycle codes**: `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The full per-code field set is documented in `contract-reference.md` and is preserved byte-for-byte from `0.8` into `0.9`. Adding a field to any of these codes is a major bump.
 - **New request-validation tier error code `consent_required`**: `error.details = {deniedReason: string, commandName: string, mutationCategory: string}`. Returned at the request boundary when a mutating command is issued against a daemon launched without `-IKnowWhatImDoing`. Does NOT carry script-lifecycle fields (`messages`, `messagesTruncated`, `ranInitialize`, etc.) because no script execution has begun.
-- **Locator semantics**: file-by-name and master-by-id resolution rules from `0.8` are preserved.
+- **Locator semantics**: file-by-name and master-by-id resolution rules from `0.8` are preserved. As of 0.22, omitted `path` defaults to `""`.
 - **Durability semantics**: `session.save` saved-files vs pending-shutdown distinction from `0.8` is preserved.
 
 The full schema reference, per-field types, and per-command envelope examples live in `contract-reference.md`.
 
 ## What counts as breaking
 
-- Renaming any field present in `0.20`.
-- Removing any field present in `0.20`.
-- Semantically narrowing the meaning of any field present in `0.20`.
+- Renaming any field present in `0.22`.
+- Removing any field present in `0.22`.
+- Semantically narrowing the meaning of any field present in `0.22`.
 - Adding a member to or reordering `supports.jobs.kinds`.
 - Adding a field to or modifying any frozen 7-code lifecycle `error.details` shape.
 

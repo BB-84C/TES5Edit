@@ -4,7 +4,7 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.20`, captured in the Phase 15G accepted capability snapshot.
+- Current `contractVersion`: `0.22`, pending Phase 17 Starfield runtime verification.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
@@ -41,6 +41,25 @@ The frozen `supports.jobs.kinds` list remains:
 10. `cleaning.sort_and_clean_masters`
 
 See `examples/01-capabilities.md` for the source-linked response.
+
+## Locator semantics (0.22)
+
+- Locator objects require `file`.
+- `formId` is optional unless the addressed command requires a record identity.
+- `path` is optional. Missing `path` defaults to the record root and resolves the
+  same way as `path:""`.
+
+## `records.copy_into` nil-copy diagnostics (0.22)
+
+When native `wbCopyElementToFile` returns nil, `records.copy_into` still returns
+`mutation_not_allowed`. In 0.22 it forwards the native gate reason when it can
+identify one:
+
+- `Source contains Reflection and can not be copied`
+- `Source contains Unmapped FormID and can not be copied into a module which does not have the game master as its first master`
+
+Other nil-copy failures keep the existing generic message:
+`Automation records.copy_into could not identify the copied main record`.
 
 ## Element Mutation Verbs (0.11)
 

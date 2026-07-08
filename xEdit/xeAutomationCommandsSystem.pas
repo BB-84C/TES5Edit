@@ -150,14 +150,11 @@ var
   lReverseNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Phase 16 (0.20 -> 0.21) adds two additive surfaces at once:
-  //   * records.apply_filter offset-based pagination (issue #4 fix) so agents
-  //     can drain filter matches past the previously silent 100-record cap.
-  //   * Starfield ESM small/localized header-flag aliases + localized readback
-  //     on files.create, files.set_header_flags, and file summaries.
-  // Both are additive: pre-0.21 clients that ignore new keys keep working, and
-  // 0.21-aware wrappers can probe the two new capability blocks below.
-  Result.S['contractVersion'] := '0.21';
+  // Contract 0.22 documents two wire-visible compatibility fixes: locator.path
+  // may be omitted (defaulting to the record root), and records.copy_into now
+  // forwards native nil-copy refusal reasons for Starfield Reflection and
+  // Unmapped FormID gate failures instead of only the generic fallback.
+  Result.S['contractVersion'] := '0.22';
 
   xeAutomationEnsureCapabilityCommandSurface;
 
