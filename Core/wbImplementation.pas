@@ -7027,7 +7027,7 @@ function wbReflectionElementContainsFormRef(const aReflElement: IwbElement): Boo
 // typeKind==9 form-refs serialize as 'Ref'). See
 // .opencode/artifacts/issue5-pndt-reflection-copy/multi-lens/safe-copy-design-2026-07-08.md.
 const
-  cReflRefType = Integer($FFFFFF05); // 'Ref' per wbREFLStringToStr
+  cReflRefType = Integer($FFFFFF05); // 'Ref' per wbREFLStringToStr; keep in sync with the itS32 'Field Type' member in wbREFLCLAS
 var
   lContainer : IwbContainerElementRef;
   lClasses   : IwbContainerElementRef;
@@ -7051,7 +7051,7 @@ begin
 
     var lFieldsElement := lClass.ElementByPath['Fields'];
     if not Assigned(lFieldsElement) then
-      Continue; // class with no declared fields cannot contribute a Ref
+      Exit; // fail-closed: 'Fields' is a mandatory CLAS member, so nil signals a truncated/corrupt class table (a genuinely field-less class still yields an empty Fields container)
     if not Supports(lFieldsElement, IwbContainerElementRef, lFields) then
       Exit;
 
@@ -7059,7 +7059,9 @@ begin
       if not Supports(lFields.Elements[lFieldIdx], IwbContainerElementRef, lField) then
         Exit;
       var lFieldType := lField.ElementNativeValues['Field Type'];
-      if VarIsOrdinal(lFieldType) and (Integer(lFieldType) = cReflRefType) then
+      if not VarIsOrdinal(lFieldType) then
+        Exit; // fail-closed: an unreadable field type cannot be proven non-Ref -> unsafe
+      if Integer(lFieldType) = cReflRefType then
         Exit(True); // form-reference present -> unsafe
     end;
   end;
@@ -7083,7 +7085,7 @@ begin
     Exit;
   end;
 
-  var SelfRef := Self as IwbContainerElementRef;
+  var SelfRef := Self as IwbContainerElementRef; // interface keep-alive across the child recursion
   for var lElementIdx := 0 to Pred(GetElementCount) do begin
     Result := cntElements[lElementIdx].ContainsUnsafeReflection;
     if Result then
@@ -19147,9 +19149,14 @@ function TwbElement.ContainsUnsafeReflection: Boolean;
 begin
   // A base (non-container) element cannot expose a CLAS to verify. If it is itself a
   // reflection value leaf, fail closed (unsafe). Container reflection streams are
-  // handled by the TwbContainer override, which inspects the CLAS.
+  // handled by the TwbContainer override, which inspects the CLAS. dfIsReflection is
+  // checked on both the def and the value-def (dfIsReflection does not inherit-down,
+  // so a future non-container reflection leaf could carry it only on the value-def).
   var lDef := GetDef;
-  Result := Assigned(lDef) and (dfIsReflection in lDef.DefFlags);
+  if Assigned(lDef) and (dfIsReflection in lDef.DefFlags) then
+    Exit(True);
+  var lValueDef := GetValueDef;
+  Result := Assigned(lValueDef) and (dfIsReflection in lValueDef.DefFlags);
 end;
 
 function TwbElement.ContainsUnmappedFormID: Boolean;
