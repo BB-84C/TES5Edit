@@ -1735,6 +1735,22 @@ end;
 //  end;
 //end;
 
+// The empty-name QUPA array receives the subrecord directly; parent traversal would count the entire component.
+function wbQUPACountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
+var
+  PayloadSize: NativeUInt;
+begin
+  Result := 0;
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) then
+    Exit;
+  if NativeUInt(aEndPtr) < NativeUInt(aBasePtr) then
+    Exit;
+  PayloadSize := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+  if (PayloadSize mod 4) <> 0 then
+    Exit;
+  Result := PayloadSize div 4;
+end;
+
 function wbBFCDATADecider(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Integer;
 var
   lContainer           : IwbContainer;
@@ -6242,6 +6258,7 @@ begin
         'BGSPlanetContentManagerContentProperties_Component',
         'BGSPrimitive_Component',
         'BGSPropertySheet_Component',
+        'BGSQualityUpgrade_Component',
         'BGSScannable',
         'BGSShipManagement',
         'BGSSkinForm_Component',
@@ -6629,6 +6646,8 @@ begin
         wbRStruct('Component Data - Property Sheet', [
           wbPRPS
         ]),
+        //BGSQualityUpgrade_Component
+        wbArray(QUPA, 'Quality Upgrades', wbFormID('Quality Upgrade'), [], wbQUPACountCallback),
         //ParticleSystem_Component
         wbRStruct('Component Data - Particle System', [
           wbREFLStruct(PTCL)

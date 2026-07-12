@@ -1208,6 +1208,7 @@ const
   QUAL : TwbSignature = 'QUAL'; { New To Skyrim }
   QUCF : TwbSignature = 'QUCF'; { New To Fallout 76 }
   QUIM : TwbSignature = 'QUIM'; { New To Fallout 76 }
+  QUPA : TwbSignature = 'QUPA'; { New To Starfield }
   QUST : TwbSignature = 'QUST';
   RABG : TwbSignature = 'RABG'; { New To Starfield }
   RACE : TwbSignature = 'RACE';
