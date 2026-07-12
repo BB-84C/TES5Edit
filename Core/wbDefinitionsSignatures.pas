@@ -263,6 +263,7 @@ const
   CII0 : TwbSignature = 'CII0'; { New to Fallout 76 }
   CIS1 : TwbSignature = 'CIS1'; { New to Skyrim }
   CIS2 : TwbSignature = 'CIS2'; { New to Skyrim }
+  CIES : TwbSignature = 'CIES'; { New To Starfield }
   CITC : TwbSignature = 'CITC'; { New to Skyrim }
   CLAS : TwbSignature = 'CLAS';
   CLDC : TwbSignature = 'CLDC';
@@ -280,6 +281,7 @@ const
   CNAM : TwbSignature = 'CNAM';
   CNCY : TwbSignature = 'CNCY'; { New To Fallout 76 }
   CNDC : TwbSignature = 'CNDC'; { New To Fallout 76 }
+  CNDD : TwbSignature = 'CNDD'; { New To Starfield }
   CNDF : TwbSignature = 'CNDF'; { New To Fallout 76 }
   CNDT : TwbSignature = 'CNDT';
   CNTO : TwbSignature = 'CNTO';
@@ -617,6 +619,7 @@ const
   GPOF : TwbSignature = 'GPOF'; { New To Starfield }
   GPOG : TwbSignature = 'GPOG'; { New To Starfield }
   GRPH : TwbSignature = 'GRPH'; { New To Starfield }
+  GWED : TwbSignature = 'GWED'; { New To Starfield }
   GWOR : TwbSignature = 'GWOR'; { New to Skyrim }
   H0TX : TwbSignature = 'H0TX';
   HACK : TwbSignature = 'HACK';
@@ -1117,6 +1120,7 @@ const
   PRRF : TwbSignature = 'PRRF'; { New To Starfield }
   PRRK : TwbSignature = 'PRRK'; { New To Starfield }
   PRTN : TwbSignature = 'PRTN'; { New To Starfield }
+  PRUC : TwbSignature = 'PRUC'; { New To Starfield }
   PRVN : TwbSignature = 'PRVN'; { New To Starfield }
   PSCT : TwbSignature = 'PSCT'; { New To Fallout 76 }
   PSDC : TwbSignature = 'PSDC'; { New To Starfield }

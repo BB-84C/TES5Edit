@@ -9408,6 +9408,7 @@ begin
     wbVMAD,
     wbOBND(True),
     wbODTYReq,
+    wbOPDS,
     wbBaseFormComponents,
     wbSoundReference(ASLS, 'Looping Sound'),
     wbSoundReference(WED0, 'Interior Sound'),
@@ -9924,11 +9925,20 @@ begin
     wbFormIDCk(ANAM, 'Add To List', [FLST, NULL])
   ]);
 
-  var wbPerkConditions :=
-    wbRStructSK([0], 'Perk Condition', [
+  // Starfield PERK effects interleave one or more PRKC/CTDA condition
+  // fragments before the EPFT parameter block. Recent DLC/mod records also
+  // carry CNDD/CIES fragments in the same slot. Keep those new fragments
+  // opaque until their CK semantics are known, but accept the exact payload
+  // signatures so the reader stops cleanly before EPFT/EPFB/EPFD.
+  var wbPerkConditionPayload :=
+    wbRUnion('Perk Condition Payload', [
       wbInteger(PRKC, 'Run On (Tab Index)', itS8{, wbPRKCToStr, wbPRKCToInt}),
-      wbConditions.SetRequired
-    ], [], cpNormal, False{, nil, nil, wbPERKPRKCDontShow});
+      wbByteArray(CTDA, 'Condition'),
+      wbString(CIS1, 'Parameter #1'),
+      wbString(CIS2, 'Parameter #2'),
+      wbEmpty(CNDD, 'Unknown Condition Data Marker'),
+      wbByteArray(CIES, 'Unknown Condition Extra Data')
+    ]);
 
   var wbPerkEffect :=
     wbRStructSK([0, 1], 'Effect', [
@@ -9983,7 +9993,7 @@ begin
         ])
       ], cpNormal, True),
 
-      wbRArrayS('Perk Conditions', wbPerkConditions),
+      wbRArray('Perk Conditions', wbPerkConditionPayload),
 
       wbRStruct('Function Parameters', [
         wbInteger(EPFT, 'Type', itU8, wbEnum([
@@ -10078,8 +10088,11 @@ begin
       wbConditions,
       wbActivityTracker,
       wbDESC.SetRequired,
+      wbInteger(PRUC, 'Unknown', itU32),
       wbEmpty(PRRF, 'End Marker').SetRequired
     ], [], cpNormal, True),
+    wbInteger(PRUC, 'Unknown Post-Rank Tail', itU32),
+    wbEmpty(PRRF, 'Post-Rank End Marker'),
     wbRArray('Bonus Perks', wbFormIDCk(RNAM, 'Perk', [PERK]))
 
     (*
@@ -16725,6 +16738,7 @@ begin
     wbFULL,
     wbEmpty(DATA).SetRequired,
     wbFormIDCk(ANAM, 'Base Object List', [LVLI]),
+    wbFormIDCk(MNAM, 'Base Object List 2', [LVLI]),
     wbFormIDCk(ENAM, 'Rank Template', [LGDI]),
 
     wbLGDIStarSlotArray(BNAM,
@@ -16741,7 +16755,22 @@ begin
     , False),
 
     wbLGDIFilter(CNAM, 'Include Filter'),
-    wbLGDIFilter(DNAM, 'Exclude Filter')
+    wbLGDIFilter(DNAM, 'Exclude Filter'),
+
+    // SF 1.16 DLC Legendary Item records carry additional filter/rank payloads
+    // after the base star-slot filters. Keep the newly observed tails opaque
+    // until their CK semantics are known, but decode the repeated CITC/CTDA
+    // condition sets so load-order noise does not hide real schema problems.
+    wbByteArray(LNAM, 'Filter Data'),
+    wbRStructs('Filter Conditions', 'Condition Set', [
+      wbCITCReq,
+      wbConditions.SetRequired
+    ]),
+    wbByteArray(FNAM, 'Opaque FNAM Tail'),
+    wbByteArray(KNAM, 'Opaque KNAM Tail'),
+    wbByteArray(GNAM, 'Opaque GNAM Tail'),
+    wbByteArray(HNAM, 'Opaque HNAM Tail'),
+    wbByteArray(JNAM, 'Opaque JNAM Tail')
   ]);
 
   { still exists in game code, but not in Starfield.esm }
@@ -19557,6 +19586,12 @@ begin
     ], [], cpNormal, True)
   ]);
 
+  {subrecords checked against SFBGS00D.esm}
+  wbRecord(GWED, 'Gravitational Effect Data', [
+    wbEDID,
+    wbREFL
+  ]);
+
   {subrecords checked against Starfield.esm}
   wbRecord(TODD, 'Time Of Day Data', [
     wbEDID,
@@ -20537,6 +20572,7 @@ begin
   wbAddGroupOrder(FXPD);
   wbAddGroupOrder(GPOF);
   wbAddGroupOrder(GPOG);
+  wbAddGroupOrder(GWED);
 
   wbNexusModsUrl := 'https://www.nexusmods.com/starfield/mods/239';
 
