@@ -1223,3 +1223,25 @@ Impact on later phases:
 - Later Starfield component work can reuse the QUPA typing pattern and the same low24+remap decode-proof method.
 
 Real-world-state hygiene: SFBGS050.esm never modified; tool exe deployed then restored to original; BB84自用2 profile byte-identical before/after; no leftover test ESMs; MO2 never killed.
+
+## Step 2A QUPA — LOAD-LOG CLOSURE PASSED (correction to earlier decode-only claim) 2026-07-12
+
+Correction: the earlier "decode PASS" was necessary but NOT sufficient. A runtime load-log audit showed the decode-only change still emitted 292 unexpected-subrecord-QUPA errors (cascading to 9529 WEAP error lines) with the component rendering <Unknown: BGSQualityUpgrade_Component>.
+
+Root cause (oracle multi-lens + source trace): QUPA was the only Component Data union member written as a bare wbArray(QUPA,...); every sibling (including the working array component BUO4) is wbRStruct(Component Data - X, [...]). The bare subrecord was decodable on access but not consumed in order by the Background Loader.
+
+Fix (commit 9603b6bd): wrap it as wbRStruct(Component Data - Quality Upgrades, [ wbArray(QUPA, ...) ]).
+
+Re-verified on a fresh clean LiteDebug/Win64 build (SHA 5278B178), live SF1Edit64 on the full profile, Background Loader finished:
+- Error: record WEAP: 9529 -> 0
+- unexpected (or out of order) subrecord QUPA: 292 -> 0
+- BGSQualityUpgrade_Component <Unknown>: 292 -> 0
+- Errors were found in: 452 -> 0
+- Only 3 residual errors, all the pre-existing unrelated EnhancedLightsandFX [26001126] injected-reference note.
+
+Now known / lessons for later phases:
+- A new BaseFormComponents union member MUST be wrapped in wbRStruct to be consumed in sequence at load; a bare signature-subrecord member decodes on access but fails the sequential loader (emits unexpected-subrecord + cascade). Follow the wbRStruct convention.
+- Semantic acceptance for schema-load families MUST include a runtime load-log audit (error-count delta), not just on-access decode. On-access decode can pass while the loader still errors.
+- Build discipline: launch bds -b with plain Start-Process (NOT -WindowStyle Hidden, which stalls bds before it compiles); detect completion by polling xEdit.err + Build\xEdit.exe, not by WaitForExit on bds.exe (it lingers). A definitions change forces a cold refcache reload (~12-15 min) on next launch.
+
+Step 2A QUPA is COMPLETE: decode correct AND load-log clean. State clean (tool restored, SFBGS050 untouched, MO2 never killed).
