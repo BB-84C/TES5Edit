@@ -6647,7 +6647,9 @@ begin
           wbPRPS
         ]),
         //BGSQualityUpgrade_Component
-        wbArray(QUPA, 'Quality Upgrades', wbFormID('Quality Upgrade'), [], wbQUPACountCallback),
+        wbRStruct('Component Data - Quality Upgrades', [
+          wbArray(QUPA, 'Quality Upgrades', wbFormID('Quality Upgrade'), [], wbQUPACountCallback)
+        ]),
         //ParticleSystem_Component
         wbRStruct('Component Data - Particle System', [
           wbREFLStruct(PTCL)
