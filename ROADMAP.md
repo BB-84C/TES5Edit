@@ -1245,3 +1245,13 @@ Now known / lessons for later phases:
 - Build discipline: launch bds -b with plain Start-Process (NOT -WindowStyle Hidden, which stalls bds before it compiles); detect completion by polling xEdit.err + Build\xEdit.exe, not by WaitForExit on bds.exe (it lingers). A definitions change forces a cold refcache reload (~12-15 min) on next launch.
 
 Step 2A QUPA is COMPLETE: decode correct AND load-log clean. State clean (tool restored, SFBGS050 untouched, MO2 never killed).
+
+## Item 3 re-eval: PERK/LGDI/ASPC/GWED/Reflection load-log clean in r2 (2026-07-12)
+
+Follow-up to commit 368539ab (accept newer ASPC/PERK/LGDI/GWED layouts). Concern: did that decode-level fix repeat the QUPA trap (on-access decode passes while the sequential loader still errors)? Audited the r2 full-load log (weap-loadlog/SF1Edit_log.txt, build 5278B178, full BB84自用2 order, Background Loader: finished):
+- unexpected (or out of order) subrecord: 0
+- Errors were found in: 0
+- <Unknown: ...>: 0
+- PERK/LGDI/ASPC/GWED appear only as normal record mentions (47/12/11/1); zero of those lines contain Error/unexpected/Unknown/out-of-order/could-not/failed.
+- Only 3 residual Error: lines, all the unrelated EnhancedLightsandFX [26001126] injected REFR note.
+Conclusion: the 368539ab families are load-log clean in r2; no wbRStruct-style follow-up needed. Item 3 CLOSED.
