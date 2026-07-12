@@ -1202,3 +1202,24 @@ Each new appended phase should answer exactly three questions:
 Keep product-contract facts, semantic acceptance outcomes, and accepted limitations here. Keep demo/recording mechanics, one-off operator narration, transient PIDs, and similar local execution noise in `.opencode/artifacts/...`, not in the roadmap.
 
 This keeps the roadmap anchored to accepted current truth instead of turning it into either historical churn or fake future planning.
+
+## Step 2A QUPA — DELIVERED (decode-scoped acceptance PASS) 2026-07-12
+
+What this round delivered:
+- Starfield QUPA (BGSQualityUpgrade_Component) now typed as an ordered, remap-aware wbFormID array. Product change in Core/wbDefinitionsSF1.pas (signature-bounds count callback + shared BaseFormComponents union branch) and Core/wbDefinitionsSignatures.pas. Built LiteDebug Win64/Win32.
+- Semantic acceptance PASS (oracle-reviewed) on the live MO2-backed SF1Edit64 daemon (BB84自用2) against real SFBGS050.esm: WEAP DoubleEdgedHatchet (6 targets) and ARMO RyujinHelmet (5 targets) decode as ordered FormID arrays; daemon load-order FormIDs match on-disk file-local low24 in order; size=4*count; unresolved=0; Check empty. Cross-validated by an independent on-disk raw parser.
+
+Previously unknown, now known:
+- The decode/typing works end-to-end on live game data; QUPA entries are real wbFormID links (LinksTo resolves; FileID remap applied on WEAP entries 02->2D).
+- Correct runtime execution model is decoupled launch-daemon (MO2 IPC, pidfile, return fast) + short dcall commands; a monolithic blocking harness is the wrong shape and gets reaped when backgrounded.
+- Live-MO2 forward launch must NOT pass -p <profile> (silent no-launch); use run -e SF1Edit64 -a "...". First heavy-profile load after an EXE swap ~14-15 min.
+- JvI runtime policy denies the rfReplaceAll const; Agent daemon scripts must avoid StringReplace-with-flags (emit hex directly, diagnostic on a separate raw message line).
+- records.copy_into is blocked for reflection-bearing records ("Source contains Reflection and can not be copied"); WEAP fixtures carry REFL, so whole-record QUPA copy/remap could not be exercised on them.
+- A GUI "Save changed files?" modal blocks shutdown when a driver leaves dirty in-session files; harnesses must reconcile dirty state (session.get_dirty_state + session.save, or planned force-shutdown for throwaway) before closing.
+
+Impact on later phases:
+- Treat the decoupled launch-daemon + dcall pattern as the canonical runtime-verification harness; align/retire the monolithic run-step2b harness accordingly.
+- QUPA copy/remap/save/reload round-trip and runtime malformed-Check remain NOT-COVERED / PENDING (blocked by REFL on WEAP, read-only-source on ARMO, and the write-new-ESM-only constraint / no 6-byte-array API). Re-open only from a real user report plus a non-REFL QUPA carrier or a synth path writing a NEW ESM.
+- Later Starfield component work can reuse the QUPA typing pattern and the same low24+remap decode-proof method.
+
+Real-world-state hygiene: SFBGS050.esm never modified; tool exe deployed then restored to original; BB84自用2 profile byte-identical before/after; no leftover test ESMs; MO2 never killed.
