@@ -1255,3 +1255,12 @@ Follow-up to commit 368539ab (accept newer ASPC/PERK/LGDI/GWED layouts). Concern
 - PERK/LGDI/ASPC/GWED appear only as normal record mentions (47/12/11/1); zero of those lines contain Error/unexpected/Unknown/out-of-order/could-not/failed.
 - Only 3 residual Error: lines, all the unrelated EnhancedLightsandFX [26001126] injected REFR note.
 Conclusion: the 368539ab families are load-log clean in r2; no wbRStruct-style follow-up needed. Item 3 CLOSED.
+
+## Step 2A QUPA — 2026-07-12 r2 runtime round-trip (session findings)
+
+- RedPill/REFL resolved empirically: RedPill clears wbStarfieldReverseEngineeringIncomplete (xeInit.pas:973); WEAP 0200D2DB still refused because it carries UNSAFE (form-ref) reflection. RedPill lifts the global gate, not unsafe-reflection records.
+- No regression from the wbRStruct wrapper: QUPA decodes as 5 ordered resolved OMODs (native elements.children, source + copied target). Agent-audit FindQupa fixed to post-order (descend past the wrapper).
+- ARMO copy/remap/save proven: non-mutating reject OK; copy OK; record-level remap-on-write 02019268 -> 01019268 (in-memory + on-disk raw), load-order 2D019268 preserved; QUPA array preserved (5 match); saved ESM raw-validated.
+- Reload-persistence + runtime-malformed BLOCKED by running-MO2 profile clobber (MO2 36472 rewrites plugins/modlist from memory on forward-launch, stripping disk edits). Not killing/restarting the user MO2; not risking a second same-profile instance. Strongly evidenced via on-disk validation + proven decode; direct fresh-load witness needs a user-enabled overlay in the MO2 GUI.
+- Decoupled harness delivered (launch-daemon + dcall): deploy-and-launch.ps1, drive-qupa-roundtrip.ps1, dcall2.ps1, poll-ready.ps1, close-daemon.ps1, launch-only.ps1 -- retires the in-shell-blocking monolith.
+- State hygiene: tool restored CF411627; SFBGS050 untouched; MO2 never killed; profile pristine re: VTOS.
