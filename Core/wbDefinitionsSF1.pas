@@ -1736,6 +1736,16 @@ end;
 //end;
 
 // The empty-name QUPA array receives the subrecord directly; parent traversal would count the entire component.
+// QUPA is a flat array of 4-byte FormIDs, so the element count is payloadBytes div 4.
+// Deliberate fail-closed to 0 on a non-multiple-of-4 (i.e. corrupt) payload: this is
+// intentionally safe, NOT floor(payloadBytes/4). A non-aligned payload is corrupt with an
+// unknown corruption offset; reading floor(n/4) entries would risk presenting MISALIGNED
+// garbage as valid form-references (which a user might act on), whereas count 0 renders an
+// empty array and never surfaces garbage. xEdit itself always writes 4-aligned QUPA, so a
+// non-aligned payload only arises from external file corruption. Trade-off (accepted): on
+// that non-occurring corruption case the array shows empty WITHOUT a loud diagnostic. If a
+// visible malformation warning is ever wanted, add a ctCheck on the array that reports
+// "size not a multiple of 4" while keeping this count at 0 (do not switch to floor(n/4)).
 function wbQUPACountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
 var
   PayloadSize: NativeUInt;
@@ -1747,7 +1757,7 @@ begin
     Exit;
   PayloadSize := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
   if (PayloadSize mod 4) <> 0 then
-    Exit;
+    Exit; // corrupt/non-aligned -> fail closed to 0 (safe: no misaligned-garbage entries)
   Result := PayloadSize div 4;
 end;
 
