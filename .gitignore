@@ -258,3 +258,6 @@ AGENTS.md
 /Tools/Automation
 xEdit.err
 /.playwright-mcp
+
+# best-of-N isolation worktrees
+.worktrees/
