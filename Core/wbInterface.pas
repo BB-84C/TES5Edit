@@ -19198,7 +19198,7 @@ end;
 function wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr: Pointer;
   const aElement: IwbElement; aMode: TwbReflectionPayloadMode;
   out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
-var RootElement: IwbElement; RootData, PassedData: IwbDataContainer; RootBase, RootEnd: PByte; Context: TwbReflectionWalkContext;
+var RootElement: IwbElement; RootData, PassedData, LiveLeaf: IwbDataContainer; RootBase, RootEnd, LeafBase, LeafEnd: PByte; Context: TwbReflectionWalkContext;
 begin
   SetLength(aSlots, 0); aReason := '';
   if not Assigned(aBasePtr) or not Assigned(aEndPtr) or (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then begin aReason := 'invalid reflection payload extent'; Exit(rdsMalformed); end;
@@ -19218,8 +19218,19 @@ begin
       end;
       RootBase := RootData.DataBasePtr; RootEnd := RootData.DataEndPtr;
       if (NativeUInt(RootEnd) - NativeUInt(RootBase) < 4) or (PCardinal(RootBase)^ <> rsBETH) then raise EwbReflectionUnsupported.Create('containing subrecord is not a BETH reflection stream');
+      // Reading RootData.DataBasePtr above can trigger UpdateStorageFromElements on the
+      // containing subrecord: if a prior edit left this leaf in detached dcDataStorage, the
+      // subrecord re-merges its children into a fresh contiguous buffer and repoints this
+      // leaf, so the aBasePtr/aEndPtr the caller captured by value BEFORE Decode is now
+      // stale (see element-tree lifecycle descent -> TwbValue.MastersUpdated). Re-derive the
+      // leaf's LIVE extent for projection; the returned slot offsets stay leaf-relative to it,
+      // and the lifecycle overrides re-fetch the same live base for their per-slot writes.
+      LeafBase := aBasePtr; LeafEnd := aEndPtr;
+      if Supports(aElement, IwbDataContainer, LiveLeaf) then begin
+        LeafBase := LiveLeaf.DataBasePtr; LeafEnd := LiveLeaf.DataEndPtr;
+      end;
       Context := TwbReflectionWalkContext.Create(RootElement, RootBase, RootEnd);
-      try Context.Run; Context.Project(aElement, aBasePtr, aEndPtr, aMode, aSlots); finally Context.Free; end;
+      try Context.Run; Context.Project(aElement, LeafBase, LeafEnd, aMode, aSlots); finally Context.Free; end;
       Result := rdsComplete;
     except
       on E: EwbReflectionUnsupported do begin SetLength(aSlots, 0); aReason := E.Message; Result := rdsUnsupported; end;
@@ -19331,13 +19342,20 @@ var
   lReason: string;
   lFormID: IwbIntegerDef;
   lSlot: TwbReflectionFormIDSlot;
+  lBase: PByte;
+  lLiveLeaf: IwbDataContainer;
 begin
   if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
     Exit;
+  // Decode may have re-merged this leaf into a settled subrecord buffer and repointed it,
+  // stranding the by-value aBasePtr; drive per-slot work off the leaf's LIVE base instead.
+  lBase := aBasePtr;
+  if Supports(aElement, IwbDataContainer, lLiveLeaf) then
+    lBase := lLiveLeaf.DataBasePtr;
   lFormID := wbFormID('Reflection FormID');
   for lSlot in lSlots do
-    lFormID.BuildRef(PByte(aBasePtr) + lSlot.Offset,
-      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement);
+    lFormID.BuildRef(PByte(lBase) + lSlot.Offset,
+      PByte(lBase) + lSlot.Offset + SizeOf(Cardinal), aElement);
 end;
 
 procedure TwbReflectionPayloadDef.FindUsedMasters(aBasePtr, aEndPtr: Pointer;
@@ -19347,13 +19365,20 @@ var
   lReason: string;
   lFormID: IwbIntegerDef;
   lSlot: TwbReflectionFormIDSlot;
+  lBase: PByte;
+  lLiveLeaf: IwbDataContainer;
 begin
   if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
     Exit;
+  // Live-base re-fetch: without it a stale aBasePtr fails Decode/projection and the
+  // reflection-embedded master goes unreported, so CleanMasters could drop a live master.
+  lBase := aBasePtr;
+  if Supports(aElement, IwbDataContainer, lLiveLeaf) then
+    lBase := lLiveLeaf.DataBasePtr;
   lFormID := wbFormID('Reflection FormID');
   for lSlot in lSlots do
-    lFormID.FindUsedMasters(PByte(aBasePtr) + lSlot.Offset,
-      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement, aMasters);
+    lFormID.FindUsedMasters(PByte(lBase) + lSlot.Offset,
+      PByte(lBase) + lSlot.Offset + SizeOf(Cardinal), aElement, aMasters);
 end;
 
 function TwbReflectionPayloadDef.CompareExchangeFormID(aBasePtr, aEndPtr: Pointer;
@@ -19363,14 +19388,21 @@ var
   lReason: string;
   lFormID: IwbIntegerDef;
   lSlot: TwbReflectionFormIDSlot;
+  lBase: PByte;
+  lLiveLeaf: IwbDataContainer;
 begin
   Result := False;
   if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
     Exit;
+  // Live-base re-fetch: FormID renumber / change-referencing sweeps reach this leaf via the
+  // element tree with a by-value aBasePtr that Decode may have stranded; write through live.
+  lBase := aBasePtr;
+  if Supports(aElement, IwbDataContainer, lLiveLeaf) then
+    lBase := lLiveLeaf.DataBasePtr;
   lFormID := wbFormID('Reflection FormID');
   for lSlot in lSlots do
-    Result := lFormID.CompareExchangeFormID(PByte(aBasePtr) + lSlot.Offset,
-      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement,
+    Result := lFormID.CompareExchangeFormID(PByte(lBase) + lSlot.Offset,
+      PByte(lBase) + lSlot.Offset + SizeOf(Cardinal), aElement,
       aOldFormID, aNewFormID) or Result;
 end;
 
@@ -19382,14 +19414,22 @@ var
   lReason: string;
   lFormID: IwbIntegerDef;
   lSlot: TwbReflectionFormIDSlot;
+  lBase: PByte;
+  lLiveLeaf: IwbDataContainer;
 begin
   Result := False;
   if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
     Exit;
+  // Live-base re-fetch: sort/clean-masters reaches this leaf via the element tree with a
+  // by-value aBasePtr that Decode may have stranded (subrecord re-merge); write through live
+  // so the reflection FormID's master index tracks the reorder instead of silently no-op'ing.
+  lBase := aBasePtr;
+  if Supports(aElement, IwbDataContainer, lLiveLeaf) then
+    lBase := lLiveLeaf.DataBasePtr;
   lFormID := wbFormID('Reflection FormID');
   for lSlot in lSlots do
-    Result := lFormID.MastersUpdated(PByte(aBasePtr) + lSlot.Offset,
-      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement,
+    Result := lFormID.MastersUpdated(PByte(lBase) + lSlot.Offset,
+      PByte(lBase) + lSlot.Offset + SizeOf(Cardinal), aElement,
       aOld, aNew, aOldCount, aNewCount) or Result;
 end;
 
