@@ -1272,3 +1272,8 @@ Conclusion: the 368539ab families are load-log clean in r2; no wbRStruct-style f
 - Malformed 6-byte Check: SAFE-but-SILENT. Callback fail-closed to count 0 (no crash/mis-parse) but no explicit Check/load-log diagnostic. Design question surfaced: add a loud diagnostic for corrupt QUPA?
 - Entry-level remap witness: sound inference (QUPA entries are wbFormID + generic remap proven at record level 02->01); direct witness needs WEAP, which is reflection-blocked by design.
 - State: tool CF411627; SFBGS050 untouched; MO2 alive; overlay+VTOS artifacts deleted (user to remove VTOS_QUPA_Overlay entry in MO2 GUI).
+
+## Step 2A QUPA — oracle review (2026-07-12): ACCEPTED
+- Oracle semantic-acceptance: ACCEPTED. decode/no-regression, copy+record-remap (in-memory+on-disk), reload-persistence (convergent), entry-remap inference (sound), malformed safe-but-silent - all PASS; both blockers judged genuine.
+- Refinement (entry-remap): direct witness obtainable via synthesis (non-trivial, master-index-per-file subtlety); natural witness WEAP reflection-blocked by design; inference sound. Reframed "not attempted" not "unobtainable".
+- Refinement (malformed): stronger concern = partially-valid payloads (22 bytes -> all 5 dropped silently, lossy on save). Design decision: keep fail-closed-to-0 vs render floor(n/4)+flag leftover.
