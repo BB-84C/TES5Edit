@@ -7024,6 +7024,7 @@ type
     procedure FindUsedMasters(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; aMasters: PwbUsedMasters); override;
     function CompareExchangeFormID(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; aOldFormID: TwbFormID; aNewFormID: TwbFormID): Boolean; override;
     function MastersUpdated(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte): Boolean; override;
+    function Assign(const aTarget: IwbElement; aIndex: Integer; const aSource: IwbElement; aOnlySK: Boolean): IwbElement; override;
   end;
 
   TwbEmptyDef = class(TwbValueDef, IwbEmptyDef)
@@ -19390,6 +19391,60 @@ begin
     Result := lFormID.MastersUpdated(PByte(aBasePtr) + lSlot.Offset,
       PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement,
       aOld, aNew, aOldCount, aNewCount) or Result;
+end;
+
+function TwbReflectionPayloadDef.Assign(const aTarget: IwbElement; aIndex: Integer;
+  const aSource: IwbElement; aOnlySK: Boolean): IwbElement;
+var
+  lSourceData, lTargetData: IwbDataContainer;
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lSourceFile, lTargetFile: IwbFile;
+  lSlot: TwbReflectionFormIDSlot;
+  lBase: PByte;
+  lLen: NativeUInt;
+  lFormID: TwbFormID;
+begin
+  // The inherited byte-array Assign copies the reflection payload verbatim, which keeps
+  // every embedded FormID in the SOURCE file's master-index encoding -> corrupt references
+  // on cross-file copy (records.copy_into adds masters before the copy, so the file-wide
+  // MastersUpdated pass never sees the new record; the copy runs through this Assign).
+  // Fix: copy the bytes, then translate each located reflection FormID slot through the same
+  // source-file -> load-order -> target-file lifecycle wbFormID (TwbFormIDDefFormater.Assign)
+  // uses. Decode the STABLE source leaf (never the just-assigned target) to locate slots, so
+  // the whole-stream walker runs on a settled buffer. Unknown/malformed source grammar (which
+  // the copy gate already blocks) is left verbatim rather than mutated.
+  Result := inherited Assign(aTarget, aIndex, aSource, aOnlySK);
+
+  if not Assigned(aSource) or not Assigned(aTarget) then
+    Exit;
+  if not Supports(aSource, IwbDataContainer, lSourceData) then
+    Exit;
+  if Decode(lSourceData.DataBasePtr, lSourceData.DataEndPtr, aSource, lSlots, lReason) <> rdsComplete then
+    Exit;
+  if Length(lSlots) = 0 then
+    Exit;
+  if not Supports(aTarget, IwbDataContainer, lTargetData) then
+    Exit;
+  lSourceFile := aSource._File;
+  lTargetFile := aTarget._File;
+  if not Assigned(lSourceFile) or not Assigned(lTargetFile) then
+    Exit;
+
+  // The copied target leaf is byte-identical to the source leaf, so the source-derived
+  // leaf-relative slot offsets address the same bytes in the target.
+  lBase := lTargetData.DataBasePtr;
+  lLen := NativeUInt(lTargetData.DataEndPtr) - NativeUInt(lBase);
+  for lSlot in lSlots do begin
+    if NativeUInt(lSlot.Offset) + SizeOf(Cardinal) > lLen then
+      Continue; // defensive: slot lies outside the copied target leaf
+    lFormID := TwbFormID.FromCardinal(PCardinal(lBase + lSlot.Offset)^);
+    if lFormID.IsHardcoded or lFormID.IsNone then
+      Continue; // hardcoded / null references are not master-remapped
+    lFormID := lSourceFile.FileFormIDtoLoadOrderFormID(lFormID, aSource.MastersUpdated);
+    lFormID := lTargetFile.LoadOrderFormIDtoFileFormID(lFormID, aTarget.MastersUpdated);
+    PCardinal(lBase + lSlot.Offset)^ := lFormID.ToCardinal;
+  end;
 end;
 
 procedure TwbByteArrayDef.AfterClone(const aSource: TwbDef);
