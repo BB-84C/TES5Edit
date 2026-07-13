@@ -5623,10 +5623,8 @@ begin
     {67} wbFormIDCkNoReach('Worldspace', [FLST,WRLD], [WRLD])
   ];
 
-  var wbConditions :=
-    wbRArray('Conditions',
-      wbRStructSK([0,1,2], 'Condition', [
-      {0} wbStructSK(CTDA, [3,5,6], '', [
+  var wbConditionCTDA :=
+    wbStructSK(CTDA, [3,5,6], '', [
           {0} wbInteger('Type', itU8, wbConditionTypeToStr, wbConditionTypeToInt).SetAfterSet(wbConditionTypeAfterSet),
           {1} wbUnused(3),
           {2} wbUnion('Comparison Value', wbConditionCompValueDecider, [
@@ -5707,7 +5705,12 @@ begin
               {14} wbInteger('Parameter #3', itS32).SetDefaultNativeValue(-1),
               {15} wbInteger('Parameter #3', itS32).SetDefaultNativeValue(-1)
               ])
-          ]),
+    ]);
+
+  var wbConditions :=
+    wbRArray('Conditions',
+      wbRStructSK([0,1,2], 'Condition', [
+      wbConditionCTDA,
       {1} wbString(CIS1, 'Parameter #1'),
       {2} wbString(CIS2, 'Parameter #2')
       ]).SetToStr(wbConditionToStr)
@@ -9958,17 +9961,15 @@ begin
 
   // Starfield PERK effects interleave one or more PRKC/CTDA condition
   // fragments before the EPFT parameter block. Recent DLC/mod records also
-  // carry CNDD/CIES fragments in the same slot. Keep those new fragments
-  // opaque until their CK semantics are known, but accept the exact payload
-  // signatures so the reader stops cleanly before EPFT/EPFB/EPFD.
+  // carry CNDD/CIES fragments in the same slot.
   var wbPerkConditionPayload :=
     wbRUnion('Perk Condition Payload', [
       wbInteger(PRKC, 'Run On (Tab Index)', itS8{, wbPRKCToStr, wbPRKCToInt}),
-      wbByteArray(CTDA, 'Condition'),
+      wbConditionCTDA,
       wbString(CIS1, 'Parameter #1'),
       wbString(CIS2, 'Parameter #2'),
       wbEmpty(CNDD, 'Unknown Condition Data Marker'),
-      wbByteArray(CIES, 'Unknown Condition Extra Data')
+      wbString(CIES, 'Condition Expression')
     ]);
 
   var wbPerkEffect :=
