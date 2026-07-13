@@ -1264,3 +1264,11 @@ Conclusion: the 368539ab families are load-log clean in r2; no wbRStruct-style f
 - Reload-persistence + runtime-malformed BLOCKED by running-MO2 profile clobber (MO2 36472 rewrites plugins/modlist from memory on forward-launch, stripping disk edits). Not killing/restarting the user MO2; not risking a second same-profile instance. Strongly evidenced via on-disk validation + proven decode; direct fresh-load witness needs a user-enabled overlay in the MO2 GUI.
 - Decoupled harness delivered (launch-daemon + dcall): deploy-and-launch.ps1, drive-qupa-roundtrip.ps1, dcall2.ps1, poll-ready.ps1, close-daemon.ps1, launch-only.ps1 -- retires the in-shell-blocking monolith.
 - State hygiene: tool restored CF411627; SFBGS050 untouched; MO2 never killed; profile pristine re: VTOS.
+
+## Step 2A QUPA — 2026-07-12 completion (session 2, user-enabled overlay)
+
+- Reload-persistence PASS: user-enabled overlay mod loaded fresh; VTOS ARMO QUPA resolved 5 OMODs in order (save->reload directly witnessed).
+- Reflection (17C-3): fork enables SAFE reflection copy (proven Phase 17E Jemison PNDT); WEAP 0200D2DB correctly blocked by BGSEffectSequenceComponent reflection field EffectSequenceMap.pParentForm type "Ref". Unblocking Ref-bearing reflection = separate reflection-FormID-remap track (deep-RE Step 2), not the QUPA slice.
+- Malformed 6-byte Check: SAFE-but-SILENT. Callback fail-closed to count 0 (no crash/mis-parse) but no explicit Check/load-log diagnostic. Design question surfaced: add a loud diagnostic for corrupt QUPA?
+- Entry-level remap witness: sound inference (QUPA entries are wbFormID + generic remap proven at record level 02->01); direct witness needs WEAP, which is reflection-blocked by design.
+- State: tool CF411627; SFBGS050 untouched; MO2 alive; overlay+VTOS artifacts deleted (user to remove VTOS_QUPA_Overlay entry in MO2 GUI).
