@@ -1,4 +1,4 @@
-
+﻿
 {******************************************************************************
 
   This Source Code Form is subject to the terms of the Mozilla Public License,
@@ -18754,53 +18754,480 @@ const
     ('NavMeshSplineExtraData::ChunkDataRef', 'RefID')
   );
 
+type
+  EwbReflectionMalformed = class(Exception);
+  EwbReflectionUnsupported = class(Exception);
+
+  TReflChunk = record
+    Sig: Cardinal;
+    HeaderPtr, DataPtr, EndPtr: PByte;
+  end;
+
+  TReflField = record
+    Name: string;
+    TypeID: Integer;
+  end;
+  TReflFields = TArray<TReflField>;
+
+  TReflClass = record
+    ID: Integer;
+    Name: string;
+    Flags: Word;
+    Fields: TReflFields;
+  end;
+
+  TReflPending = record
+    Sig: Cardinal;
+    ClassName, FieldName: string;
+    DiffMode: Boolean;
+    ClassID: Integer;
+  end;
+  TReflPendingArray = TArray<TReflPending>;
+
+  TReflAbsoluteSlot = record
+    Address: PByte;
+    ClassName, FieldName: string;
+  end;
+
+  TReflCursor = record
+    BasePtr, Pos, EndPtr: PByte;
+  end;
+
+const
+  rsBETH = Cardinal($48544542);
+  rsSTRT = Cardinal($54525453);
+  rsTYPE = Cardinal($45505954);
+  rsCLAS = Cardinal($53414C43);
+  rsOBJT = Cardinal($544A424F);
+  rsDIFF = Cardinal($46464944);
+  rsLIST = Cardinal($5453494C);
+  rsMAPC = Cardinal($4350414D);
+  rsUSER = Cardinal($52455355);
+  rsUSRD = Cardinal($44525355);
+
+  rtNull = -255;
+  rtString = -254;
+  rtList = -253;
+  rtMap = -252;
+  rtRef = -251;
+  rtInt8 = -248;
+  rtUInt8 = -247;
+  rtInt16 = -246;
+  rtUInt16 = -245;
+  rtInt32 = -244;
+  rtUInt32 = -243;
+  rtInt64 = -242;
+  rtUInt64 = -241;
+  rtBool = -240;
+  rtFloat = -239;
+  rtDouble = -238;
+
+threadvar
+  wbReflectionWalkerActive: Boolean;
+
+type
+  TwbReflectionWalkContext = class
+  private
+    FRootElement: IwbElement;
+    FRootBase, FRootEnd: PByte;
+    FChunks: TArray<TReflChunk>;
+    FClasses: TDictionary<Integer, TReflClass>;
+    FStrings: TDictionary<Integer, string>;
+    FSlots: TArray<TReflAbsoluteSlot>;
+    FRootChunkIndex: Integer;
+    FSteps, FStepLimit, FDepth: NativeUInt;
+    procedure Malformed(const S: string);
+    procedure Unsupported(const S: string);
+    procedure Need(const C: TReflCursor; N: NativeUInt);
+    procedure ValidateUTF8(P: PByte; Len: NativeUInt);
+    function ReadU16(var C: TReflCursor): Word;
+    function ReadU32(var C: TReflCursor): Cardinal;
+    function ReadS32(var C: TReflCursor): Integer;
+    procedure Tick;
+    function IsKnownSig(S: Cardinal): Boolean;
+    function ChunkCursor(const Ch: TReflChunk): TReflCursor;
+    procedure AddPending(var A: TReflPendingArray; S: Cardinal; const CN, FN: string; Diff: Boolean; ClassID: Integer = -1);
+    procedure AddSlot(P: PByte; const CN, FN: string);
+    function FindClass(ID: Integer): TReflClass;
+    procedure ParseEnvelopeAndChunks;
+    procedure ParseStringPool(const Ch: TReflChunk);
+    procedure LoadAndCrossCheckSchema;
+    procedure DecodePrimitive(var C: TReflCursor; TypeID: Integer);
+    procedure DecodeValue(var C: TReflCursor; TypeID: Integer; const CN, FN: string; Diff: Boolean; var Pending: TReflPendingArray);
+    procedure DecodeFields(var C: TReflCursor; ClassID: Integer; Diff: Boolean; var Pending: TReflPendingArray);
+    procedure DecodeClass(var C: TReflCursor; ClassID: Integer; Diff: Boolean; var Pending: TReflPendingArray);
+    procedure DecodeList(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+    procedure DecodeMap(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+    procedure DecodeUser(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+    procedure DecodeWhole;
+  public
+    constructor Create(const ARoot: IwbElement; ABase, AEnd: PByte);
+    destructor Destroy; override;
+    procedure Run;
+    procedure Project(const ALeafElement: IwbElement; ALeafBase, ALeafEnd: PByte; AMode: TwbReflectionPayloadMode; out ASlots: TwbReflectionFormIDSlots);
+  end;
+
+procedure TwbReflectionWalkContext.Malformed(const S: string);
+begin raise EwbReflectionMalformed.Create(S); end;
+
+procedure TwbReflectionWalkContext.Unsupported(const S: string);
+begin raise EwbReflectionUnsupported.Create(S); end;
+
+procedure TwbReflectionWalkContext.Need(const C: TReflCursor; N: NativeUInt);
+begin
+  if (NativeUInt(C.Pos) > NativeUInt(C.EndPtr)) or (N > NativeUInt(C.EndPtr) - NativeUInt(C.Pos)) then
+    Malformed(Format('need %d bytes, only %d remain', [N, NativeUInt(C.EndPtr) - NativeUInt(C.Pos)]));
+end;
+
+procedure TwbReflectionWalkContext.ValidateUTF8(P: PByte; Len: NativeUInt);
+var I: NativeUInt; B0, B1, B2, B3: Byte;
+begin
+  // This RTL exposes only the permissive TUTF8Encoding constructor. Validate
+  // first so malformed STRT bytes cannot be replacement-decoded as a name.
+  I := 0;
+  while I < Len do begin
+    B0 := PByte(NativeUInt(P) + I)^;
+    if B0 <= $7F then begin Inc(I); Continue; end;
+    if I + 1 >= Len then Malformed('invalid STRT UTF-8');
+    B1 := PByte(NativeUInt(P) + I + 1)^;
+    if ((B0 >= $C2) and (B0 <= $DF) and (B1 >= $80) and (B1 <= $BF)) then begin Inc(I, 2); Continue; end;
+    if I + 2 >= Len then Malformed('invalid STRT UTF-8');
+    B2 := PByte(NativeUInt(P) + I + 2)^;
+    if ((B0 = $E0) and (B1 >= $A0) and (B1 <= $BF) and (B2 >= $80) and (B2 <= $BF)) or
+       ((((B0 >= $E1) and (B0 <= $EC)) or ((B0 >= $EE) and (B0 <= $EF))) and (B1 >= $80) and (B1 <= $BF) and (B2 >= $80) and (B2 <= $BF)) or
+       ((B0 = $ED) and (B1 >= $80) and (B1 <= $9F) and (B2 >= $80) and (B2 <= $BF)) then begin Inc(I, 3); Continue; end;
+    if I + 3 >= Len then Malformed('invalid STRT UTF-8');
+    B3 := PByte(NativeUInt(P) + I + 3)^;
+    if ((B0 = $F0) and (B1 >= $90) and (B1 <= $BF) and (B2 >= $80) and (B2 <= $BF) and (B3 >= $80) and (B3 <= $BF)) or
+       (((B0 >= $F1) and (B0 <= $F3)) and (B1 >= $80) and (B1 <= $BF) and (B2 >= $80) and (B2 <= $BF) and (B3 >= $80) and (B3 <= $BF)) or
+       ((B0 = $F4) and (B1 >= $80) and (B1 <= $8F) and (B2 >= $80) and (B2 <= $BF) and (B3 >= $80) and (B3 <= $BF)) then begin Inc(I, 4); Continue; end;
+    Malformed('invalid STRT UTF-8');
+  end;
+end;
+
+function TwbReflectionWalkContext.ReadU16(var C: TReflCursor): Word;
+begin Need(C, 2); Result := PWord(C.Pos)^; Inc(C.Pos, 2); end;
+
+function TwbReflectionWalkContext.ReadU32(var C: TReflCursor): Cardinal;
+begin Need(C, 4); Result := PCardinal(C.Pos)^; Inc(C.Pos, 4); end;
+
+function TwbReflectionWalkContext.ReadS32(var C: TReflCursor): Integer;
+begin Result := Integer(ReadU32(C)); end;
+
+procedure TwbReflectionWalkContext.Tick;
+begin
+  Inc(FSteps);
+  if FSteps > FStepLimit then Malformed('reflection operation budget exceeded');
+end;
+
+function TwbReflectionWalkContext.IsKnownSig(S: Cardinal): Boolean;
+begin
+  Result := (S = rsSTRT) or (S = rsTYPE) or (S = rsCLAS) or (S = rsOBJT) or
+    (S = rsDIFF) or (S = rsLIST) or (S = rsMAPC) or (S = rsUSER) or (S = rsUSRD);
+end;
+
+function TwbReflectionWalkContext.ChunkCursor(const Ch: TReflChunk): TReflCursor;
+begin Result.BasePtr := Ch.DataPtr; Result.Pos := Ch.DataPtr; Result.EndPtr := Ch.EndPtr; end;
+
+procedure TwbReflectionWalkContext.AddPending(var A: TReflPendingArray; S: Cardinal; const CN, FN: string; Diff: Boolean; ClassID: Integer);
+var N: Integer;
+begin
+  N := Length(A); SetLength(A, N + 1);
+  A[N].Sig := S; A[N].ClassName := CN; A[N].FieldName := FN; A[N].DiffMode := Diff; A[N].ClassID := ClassID;
+end;
+
+procedure TwbReflectionWalkContext.AddSlot(P: PByte; const CN, FN: string);
+var N: Integer;
+begin
+  if (P < FRootBase) or (P + 4 > FRootEnd) then Malformed('FormID slot lies outside reflection stream');
+  N := Length(FSlots); SetLength(FSlots, N + 1);
+  FSlots[N].Address := P; FSlots[N].ClassName := CN; FSlots[N].FieldName := FN;
+end;
+
+function TwbReflectionWalkContext.FindClass(ID: Integer): TReflClass;
+begin
+  if not FClasses.TryGetValue(ID, Result) then Unsupported(Format('undeclared reflection class offset %d', [ID]));
+end;
+
+constructor TwbReflectionWalkContext.Create(const ARoot: IwbElement; ABase, AEnd: PByte);
+begin
+  inherited Create;
+  FRootElement := ARoot; FRootBase := ABase; FRootEnd := AEnd;
+  FClasses := TDictionary<Integer, TReflClass>.Create;
+  FStrings := TDictionary<Integer, string>.Create;
+  FRootChunkIndex := -1; FSteps := 0; FDepth := 0;
+  FStepLimit := 4 * (NativeUInt(AEnd) - NativeUInt(ABase) + 1024);
+end;
+
+destructor TwbReflectionWalkContext.Destroy;
+begin FStrings.Free; FClasses.Free; inherited; end;
+
+procedure TwbReflectionWalkContext.ParseEnvelopeAndChunks;
+var C: TReflCursor; Declared, Size: Cardinal; Ch: TReflChunk; N: Integer;
+begin
+  C.BasePtr := FRootBase; C.Pos := FRootBase; C.EndPtr := FRootEnd;
+  if NativeUInt(FRootEnd) - NativeUInt(FRootBase) < 16 then Malformed('short BETH envelope');
+  if ReadU32(C) <> rsBETH then Malformed('invalid BETH signature');
+  if ReadU32(C) <> 8 then Malformed('invalid BETH data size');
+  if ReadU32(C) <> 4 then Unsupported('only reflection version 4 is supported');
+  Declared := ReadU32(C);
+  while C.Pos < C.EndPtr do begin
+    Need(C, 8); Ch.HeaderPtr := C.Pos; Ch.Sig := ReadU32(C); Size := ReadU32(C);
+    if (PByte(@Ch.Sig)[0] > $7F) or (PByte(@Ch.Sig)[1] > $7F) or (PByte(@Ch.Sig)[2] > $7F) or (PByte(@Ch.Sig)[3] > $7F) then
+      Malformed('non-ASCII reflection chunk signature');
+    if not IsKnownSig(Ch.Sig) then Unsupported('unknown reflection chunk');
+    Need(C, Size); Ch.DataPtr := C.Pos; Ch.EndPtr := C.Pos + Size; C.Pos := Ch.EndPtr;
+    N := Length(FChunks); SetLength(FChunks, N + 1); FChunks[N] := Ch;
+  end;
+  if C.Pos <> C.EndPtr then Malformed('reflection stream extent mismatch');
+  if Declared <> Cardinal(Length(FChunks) + 1) then Malformed('BETH chunk count mismatch');
+  if (Length(FChunks) < 3) or (FChunks[0].Sig <> rsSTRT) or (FChunks[1].Sig <> rsTYPE) then Malformed('STRT and TYPE must lead the stream');
+end;
+
+procedure TwbReflectionWalkContext.ParseStringPool(const Ch: TReflChunk);
+var P, Z: PByte; Offset, Len: Integer; U: TUTF8Encoding; S: string; B: TBytes;
+begin
+  P := Ch.DataPtr; U := TUTF8Encoding.Create;
+  try
+    while P < Ch.EndPtr do begin
+      Z := P; while (Z < Ch.EndPtr) and (Z^ <> 0) do Inc(Z);
+      if Z = Ch.EndPtr then Malformed('unterminated STRT string');
+      Offset := NativeInt(P) - NativeInt(Ch.DataPtr); Len := NativeInt(Z) - NativeInt(P);
+      ValidateUTF8(P, Len); SetLength(B, Len); if Len <> 0 then Move(P^, B[0], Len);
+      try S := U.GetString(B); except on E: EEncodingError do Malformed('invalid STRT UTF-8'); end;
+      FStrings.Add(Offset, S); P := Z + 1;
+    end;
+  finally U.Free; end;
+  if FStrings.Count = 0 then Malformed('empty STRT');
+end;
+
+procedure TwbReflectionWalkContext.LoadAndCrossCheckSchema;
+var I, J, ClassNo, RootCount, StrtCount, TypeCount: Integer; C: TReflCursor; DeclaredClasses: Cardinal;
+  Classes, CE, Fields, FE: IwbContainerElementRef; ClassesElement, FieldsElement: IwbElement;
+  V: Variant; RawID, RawForm, RawType, RawName: Integer; RawFlags, RawFieldCount: Word;
+  RC: TReflClass; RF: TReflField; RawNameText: string;
+begin
+  StrtCount := 0; TypeCount := 0; RootCount := 0; ClassNo := 0;
+  for I := 0 to High(FChunks) do begin if FChunks[I].Sig = rsSTRT then Inc(StrtCount); if FChunks[I].Sig = rsTYPE then Inc(TypeCount); end;
+  if (StrtCount <> 1) or (TypeCount <> 1) then Malformed('expected exactly one STRT and TYPE');
+  ParseStringPool(FChunks[0]); C := ChunkCursor(FChunks[1]);
+  if NativeUInt(C.EndPtr) - NativeUInt(C.Pos) <> 4 then Malformed('TYPE has invalid size');
+  DeclaredClasses := ReadU32(C);
+  if not Supports(FRootElement, IwbContainerElementRef, Classes) then Unsupported('reflection root has no parsed container');
+  ClassesElement := Classes.ElementByPath['Classes'];
+  if not Supports(ClassesElement, IwbContainerElementRef, Classes) then Unsupported('parsed reflection Classes sibling is unavailable');
+  for I := 2 to High(FChunks) do begin
+    case FChunks[I].Sig of
+      rsCLAS: begin
+        if RootCount <> 0 then Malformed('CLAS after root');
+        if ClassNo >= Classes.ElementCount then Malformed('raw CLAS has no parsed sibling');
+        if not Supports(Classes.Elements[ClassNo], IwbContainerElementRef, CE) then Unsupported('parsed Class is not a container');
+        C := ChunkCursor(FChunks[I]); if NativeUInt(C.EndPtr) - NativeUInt(C.Pos) < 12 then Malformed('short CLAS');
+        RawID := ReadS32(C); RawForm := ReadS32(C); RawFlags := ReadU16(C); RawFieldCount := ReadU16(C);
+        if RawID < 0 then Malformed('negative class offset');
+        if FClasses.ContainsKey(RawID) then Malformed('duplicate class offset');
+        if NativeUInt(C.EndPtr) - NativeUInt(C.Pos) <> NativeUInt(RawFieldCount) * 12 then Malformed('CLAS field count/size mismatch');
+        if not FStrings.TryGetValue(RawID, RawNameText) then Malformed('Class Name is not a STRT entry offset');
+        V := CE.ElementNativeValues['Class Name']; if not VarIsOrdinal(V) or (Integer(V) <> RawID) then Malformed('parsed/raw Class Name mismatch');
+        V := CE.ElementNativeValues['Flags']; if not VarIsOrdinal(V) or (Word(V) <> RawFlags) then Malformed('parsed/raw class Flags mismatch');
+        if CE.ElementValues['Class Name'] <> RawNameText then Malformed('parsed class name does not match STRT');
+        FieldsElement := CE.ElementByPath['Fields'];
+        if not Supports(FieldsElement, IwbContainerElementRef, Fields) then Unsupported('parsed class Fields sibling is unavailable');
+        if Fields.ElementCount <> RawFieldCount then Malformed('parsed/raw field count mismatch');
+        RC.ID := RawID; RC.Name := RawNameText; RC.Flags := RawFlags; SetLength(RC.Fields, RawFieldCount);
+        for J := 0 to Integer(RawFieldCount) - 1 do begin
+          RawName := ReadS32(C); RawType := ReadS32(C); ReadU16(C); ReadU16(C);
+          if not FStrings.TryGetValue(RawName, RF.Name) then Malformed('Field Name is not a STRT entry offset');
+          RF.TypeID := RawType;
+          if not Supports(Fields.Elements[J], IwbContainerElementRef, FE) then Unsupported('parsed Field is not a container');
+          V := FE.ElementNativeValues['Field Name']; if not VarIsOrdinal(V) or (Integer(V) <> RawName) then Malformed('parsed/raw Field Name mismatch');
+          V := FE.ElementNativeValues['Field Type']; if not VarIsOrdinal(V) or (Integer(V) <> RawType) then Malformed('parsed/raw Field Type mismatch');
+          if FE.ElementValues['Field Name'] <> RF.Name then Malformed('parsed field name does not match STRT');
+          RC.Fields[J] := RF;
+        end;
+        FClasses.Add(RawID, RC); Inc(ClassNo);
+      end;
+      rsOBJT, rsDIFF: begin Inc(RootCount); if RootCount > 1 then Malformed('multiple root chunks'); FRootChunkIndex := I; end;
+    else if RootCount = 0 then Malformed('unexpected chunk before root'); end;
+  end;
+  if Cardinal(ClassNo) <> DeclaredClasses then Malformed('TYPE class count mismatch');
+  if Classes.ElementCount <> ClassNo then Malformed('parsed Classes contains unmatched entries');
+  if RootCount <> 1 then Malformed('expected exactly one root chunk');
+end;
+
+procedure TwbReflectionWalkContext.DecodePrimitive(var C: TReflCursor; TypeID: Integer);
+var N: NativeUInt;
+begin
+  Tick;
+  case TypeID of
+    rtNull: N := 0;
+    rtString: begin N := ReadU16(C); if N = 0 then Malformed('zero-length inline string'); Need(C, N); if PByte(C.Pos + N - 1)^ <> 0 then Malformed('inline string is not NUL terminated'); Inc(C.Pos, N); Exit; end;
+    rtInt8, rtUInt8, rtBool: N := 1;
+    rtInt16, rtUInt16: N := 2;
+    rtInt32, rtUInt32, rtFloat: N := 4;
+    rtInt64, rtUInt64, rtDouble: N := 8;
+  else Unsupported(Format('unsupported primitive sentinel %d', [TypeID])); Exit; end;
+  Need(C, N); Inc(C.Pos, N);
+end;
+
+procedure TwbReflectionWalkContext.DecodeValue(var C: TReflCursor; TypeID: Integer; const CN, FN: string; Diff: Boolean; var Pending: TReflPendingArray);
+var Dispatch: Integer;
+begin
+  Tick;
+  case TypeID of
+    rtList: begin AddPending(Pending, rsLIST, CN, FN, Diff); Exit; end;
+    rtMap: begin AddPending(Pending, rsMAPC, CN, FN, Diff); Exit; end;
+    rtRef: begin
+      Dispatch := ReadS32(C); if Dispatch = rtNull then Exit;
+      if Dispatch = rtUInt32 then begin Need(C, 4); AddSlot(C.Pos, CN, FN); Inc(C.Pos, 4); Exit; end;
+      if Dispatch >= 0 then begin DecodeClass(C, Dispatch, Diff, Pending); Exit; end;
+      DecodePrimitive(C, Dispatch); Exit;
+    end;
+    rtUInt32: begin Need(C, 4); if (CN = cReflectionRawUInt32FormIDs[0][0]) and (FN = cReflectionRawUInt32FormIDs[0][1]) then AddSlot(C.Pos, CN, FN); Inc(C.Pos, 4); Exit; end;
+  end;
+  if TypeID >= 0 then DecodeClass(C, TypeID, Diff, Pending) else DecodePrimitive(C, TypeID);
+end;
+
+procedure TwbReflectionWalkContext.DecodeFields(var C: TReflCursor; ClassID: Integer; Diff: Boolean; var Pending: TReflPendingArray);
+var Cls: TReflClass; I: Integer; Selector: Word;
+begin
+  Cls := FindClass(ClassID);
+  if Diff then begin
+    while True do begin Tick; Selector := ReadU16(C); if Selector = $FFFF then Exit;
+      if Selector >= Length(Cls.Fields) then Malformed(Format('invalid DIFF selector %d for %s', [Selector, Cls.Name]));
+      DecodeValue(C, Cls.Fields[Selector].TypeID, Cls.Name, Cls.Fields[Selector].Name, True, Pending);
+    end;
+  end;
+  for I := 0 to High(Cls.Fields) do DecodeValue(C, Cls.Fields[I].TypeID, Cls.Name, Cls.Fields[I].Name, False, Pending);
+end;
+
+procedure TwbReflectionWalkContext.DecodeClass(var C: TReflCursor; ClassID: Integer; Diff: Boolean; var Pending: TReflPendingArray);
+var Cls: TReflClass;
+begin
+  Tick; Inc(FDepth); if FDepth > 512 then Malformed('reflection recursion depth exceeded');
+  try
+    Cls := FindClass(ClassID);
+    if (Cls.Flags and 4) <> 0 then begin
+      if Diff then AddPending(Pending, rsUSRD, Cls.Name, '<user-body>', True, ClassID)
+      else AddPending(Pending, rsUSER, Cls.Name, '<user-body>', False, ClassID);
+      Exit;
+    end;
+    DecodeFields(C, ClassID, Diff, Pending);
+  finally Dec(FDepth); end;
+end;
+
+procedure TwbReflectionWalkContext.DecodeList(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+var C: TReflCursor; ElementType: Integer; Count, I: Cardinal; OldPos: PByte; OldPending: Integer; Capacity: UInt64;
+begin
+  C := ChunkCursor(Ch); ElementType := ReadS32(C); Count := ReadU32(C);
+  Capacity := UInt64(NativeUInt(C.EndPtr) - NativeUInt(C.Pos)) + UInt64(Length(FChunks));
+  if UInt64(Count) > Capacity then Malformed('LIST count exceeds inline and sibling capacity');
+  for I := 1 to Count do begin OldPos := C.Pos; OldPending := Length(Children); DecodeValue(C, ElementType, Expected.ClassName, Expected.FieldName, Expected.DiffMode, Children); if (C.Pos = OldPos) and (Length(Children) = OldPending) then Malformed('LIST element consumes no bytes or sibling'); end;
+  if C.Pos <> C.EndPtr then Malformed('LIST residual bytes');
+end;
+
+procedure TwbReflectionWalkContext.DecodeMap(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+var C: TReflCursor; KeyType, ValueType: Integer; Count, I: Cardinal; OldPos: PByte; OldPending: Integer; Capacity: UInt64;
+begin
+  C := ChunkCursor(Ch); KeyType := ReadS32(C); ValueType := ReadS32(C); Count := ReadU32(C);
+  Capacity := UInt64(NativeUInt(C.EndPtr) - NativeUInt(C.Pos)) + UInt64(Length(FChunks));
+  if UInt64(Count) > Capacity then Malformed('MAPC count exceeds inline and sibling capacity');
+  for I := 1 to Count do begin
+    OldPos := C.Pos; OldPending := Length(Children);
+    DecodeValue(C, KeyType, Expected.ClassName, Expected.FieldName, False, Children);
+    DecodeValue(C, ValueType, Expected.ClassName, Expected.FieldName, Expected.DiffMode, Children);
+    if (C.Pos = OldPos) and (Length(Children) = OldPending) then Malformed('MAPC entry consumes no bytes or sibling');
+  end;
+  if C.Pos <> C.EndPtr then Malformed('MAPC residual bytes');
+end;
+
+procedure TwbReflectionWalkContext.DecodeUser(const Ch: TReflChunk; const Expected: TReflPending; var Children: TReflPendingArray);
+var C: TReflCursor; OwnerID, ActualID, Dispatch: Integer; Owner: TReflClass; I: Integer; Trailer: Cardinal;
+begin
+  C := ChunkCursor(Ch); OwnerID := ReadS32(C); if OwnerID <> Expected.ClassID then Malformed('USER owner does not match deferred class'); Owner := FindClass(OwnerID);
+  if Owner.Name = 'BGSAudio::WwiseSoundHook' then begin
+    for I := 0 to 3 do begin Dispatch := ReadS32(C); if Dispatch <> rtUInt64 then Malformed('Wwise GUID leaf has invalid dispatch'); DecodePrimitive(C, rtUInt64); end;
+    Dispatch := ReadS32(C); if Dispatch <> rtUInt32 then Malformed('Wwise pConditionForm has invalid dispatch'); Need(C, 4); AddSlot(C.Pos, Owner.Name, 'pConditionForm'); Inc(C.Pos, 4);
+    Dispatch := ReadS32(C); if Dispatch <> rtUInt32 then Malformed('Wwise pEventForm has invalid dispatch'); Need(C, 4); AddSlot(C.Pos, Owner.Name, 'pEventForm'); Inc(C.Pos, 4);
+  end else if (Owner.Name = 'BSFloatCurve') or (Owner.Name = 'BGSMaterialPropertyComponent::Entry') then begin
+    ActualID := ReadS32(C); FindClass(ActualID); DecodeFields(C, ActualID, Expected.DiffMode, Children);
+  end else Unsupported('unrecognized USER serializer ' + Owner.Name);
+  Trailer := ReadU32(C); if Trailer <> Cardinal(Length(Children)) then Malformed('USER trailer does not match deferred child count');
+  if C.Pos <> C.EndPtr then Malformed('USER residual bytes');
+end;
+
+procedure TwbReflectionWalkContext.DecodeWhole;
+var Root: TReflChunk; C: TReflCursor; RootID: Integer; Pending, Queue, Children: TReflPendingArray; Expected: TReflPending; I, J, N: Integer;
+begin
+  Root := FChunks[FRootChunkIndex]; C := ChunkCursor(Root); RootID := ReadS32(C); FindClass(RootID); DecodeFields(C, RootID, Root.Sig = rsDIFF, Pending);
+  if C.Pos <> C.EndPtr then Malformed('OBJT/DIFF residual bytes');
+  Queue := Copy(Pending);
+  for I := FRootChunkIndex + 1 to High(FChunks) do begin
+    if Length(Queue) = 0 then Malformed('unmatched reflection sibling');
+    Expected := Queue[0]; for J := 1 to High(Queue) do Queue[J - 1] := Queue[J]; SetLength(Queue, Length(Queue) - 1);
+    if FChunks[I].Sig <> Expected.Sig then Malformed('deferred sibling signature mismatch');
+    SetLength(Children, 0);
+    case FChunks[I].Sig of rsLIST: DecodeList(FChunks[I], Expected, Children); rsMAPC: DecodeMap(FChunks[I], Expected, Children); rsUSER, rsUSRD: DecodeUser(FChunks[I], Expected, Children); else Malformed('non-deferred chunk after root'); end;
+    if Length(Children) <> 0 then begin N := Length(Queue); SetLength(Queue, N + Length(Children)); for J := N - 1 downto 0 do Queue[J + Length(Children)] := Queue[J]; for J := 0 to High(Children) do Queue[J] := Children[J]; end;
+  end;
+  if Length(Queue) <> 0 then Malformed('expected reflection siblings are missing');
+end;
+
+procedure TwbReflectionWalkContext.Run;
+begin ParseEnvelopeAndChunks; LoadAndCrossCheckSchema; DecodeWhole; end;
+
+procedure TwbReflectionWalkContext.Project(const ALeafElement: IwbElement; ALeafBase, ALeafEnd: PByte; AMode: TwbReflectionPayloadMode; out ASlots: TwbReflectionFormIDSlots);
+var Root: TReflChunk; Whole: Boolean; I, N: Integer;
+begin
+  SetLength(ASlots, 0);
+  if (ALeafBase < FRootBase) or (ALeafEnd > FRootEnd) or (ALeafBase > ALeafEnd) then Malformed('reflection leaf lies outside complete stream');
+  Root := FChunks[FRootChunkIndex]; Whole := (ALeafBase = FRootBase) and (ALeafEnd = FRootEnd);
+  if Whole then begin if (AMode <> rpmInline) or (PCardinal(ALeafBase)^ <> rsBETH) then Malformed('whole reflection extent has invalid mode'); end
+  else case AMode of
+    rpmObject: if (Root.Sig <> rsOBJT) or (ALeafBase <> Root.DataPtr + 4) or (ALeafEnd <> Root.EndPtr) then Malformed('rpmObject extent is not the OBJT body after Name');
+    rpmDiff: if (Root.Sig <> rsDIFF) or (ALeafBase <> Root.DataPtr + 4) or (ALeafEnd <> Root.EndPtr) then Malformed('rpmDiff extent is not the DIFF body after Name');
+    rpmInline: if (ALeafEnd <> FRootEnd) or not ((ALeafBase = Root.HeaderPtr) or (ALeafBase = Root.EndPtr)) then Malformed('rpmInline extent is not a catalogued chunk suffix');
+  end;
+  for I := 0 to High(FSlots) do begin
+    if ((FSlots[I].Address < ALeafBase) and (FSlots[I].Address + 4 > ALeafBase)) or ((FSlots[I].Address < ALeafEnd) and (FSlots[I].Address + 4 > ALeafEnd)) then Malformed('FormID slot straddles reflection leaf boundary');
+    if (FSlots[I].Address >= ALeafBase) and (FSlots[I].Address + 4 <= ALeafEnd) then begin N := Length(ASlots); SetLength(ASlots, N + 1); ASlots[N].Offset := Cardinal(NativeUInt(FSlots[I].Address) - NativeUInt(ALeafBase)); ASlots[N].ClassName := FSlots[I].ClassName; ASlots[N].FieldName := FSlots[I].FieldName; end;
+  end;
+end;
+
 function wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr: Pointer;
   const aElement: IwbElement; aMode: TwbReflectionPayloadMode;
   out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
-var
-  lPos, lSize: NativeUInt;
+var RootElement: IwbElement; RootData, PassedData: IwbDataContainer; RootBase, RootEnd: PByte; Context: TwbReflectionWalkContext;
 begin
-  SetLength(aSlots, 0);
-  aReason := '';
-  if not Assigned(aBasePtr) or not Assigned(aEndPtr) or (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then begin
-    aReason := 'invalid reflection payload extent';
-    Exit(rdsMalformed);
-  end;
-
-  // Task 2 deliberately refuses to remap a payload unless its full reflection
-  // envelope and sibling schema are available.  This prevents a decoded prefix
-  // from being mutated while a later LIST/MAPC/USER sibling is still unknown.
-  if (NativeUInt(aEndPtr) - NativeUInt(aBasePtr) < 16) or
-     (PCardinal(aBasePtr)^ <> Cardinal($48544542)) {BETH, little endian} then begin
-    aReason := 'reflection payload requires its complete BETH envelope';
-    Exit(rdsUnsupported);
-  end;
-
-  // Validate framing before the semantic walker is allowed to inspect a byte.
-  lPos := 16;
-  while lPos < NativeUInt(aEndPtr) - NativeUInt(aBasePtr) do begin
-    if NativeUInt(aEndPtr) - NativeUInt(aBasePtr) - lPos < 8 then begin
-      aReason := 'truncated reflection chunk header';
-      Exit(rdsMalformed);
+  SetLength(aSlots, 0); aReason := '';
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) or (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then begin aReason := 'invalid reflection payload extent'; Exit(rdsMalformed); end;
+  // Schema navigation can evaluate sibling leaves. Reject same-thread recursion so a leaf can never decode itself through that path.
+  if wbReflectionWalkerActive then begin aReason := 'reflection decoder re-entry'; Exit(rdsUnsupported); end;
+  wbReflectionWalkerActive := True;
+  try
+    try
+      if (NativeUInt(aEndPtr) - NativeUInt(aBasePtr) >= 4) and (PCardinal(aBasePtr)^ = rsBETH) then begin
+        RootElement := aElement;
+        if not Supports(RootElement, IwbDataContainer, PassedData) or (PassedData.DataBasePtr <> aBasePtr) or (PassedData.DataEndPtr <> aEndPtr) then raise EwbReflectionMalformed.Create('BETH extent is not the complete reflection container');
+        RootData := PassedData;
+      end else begin
+        if not Assigned(aElement) or not Assigned(aElement.ContainingSubRecord) then raise EwbReflectionUnsupported.Create('reflection leaf has no containing subrecord');
+        RootElement := aElement.ContainingSubRecord;
+        if not Supports(RootElement, IwbDataContainer, RootData) then raise EwbReflectionUnsupported.Create('reflection root has no data container');
+      end;
+      RootBase := RootData.DataBasePtr; RootEnd := RootData.DataEndPtr;
+      if (NativeUInt(RootEnd) - NativeUInt(RootBase) < 4) or (PCardinal(RootBase)^ <> rsBETH) then raise EwbReflectionUnsupported.Create('containing subrecord is not a BETH reflection stream');
+      Context := TwbReflectionWalkContext.Create(RootElement, RootBase, RootEnd);
+      try Context.Run; Context.Project(aElement, aBasePtr, aEndPtr, aMode, aSlots); finally Context.Free; end;
+      Result := rdsComplete;
+    except
+      on E: EwbReflectionUnsupported do begin SetLength(aSlots, 0); aReason := E.Message; Result := rdsUnsupported; end;
+      on E: EwbReflectionMalformed do begin SetLength(aSlots, 0); aReason := E.Message; Result := rdsMalformed; end;
+      on E: Exception do begin SetLength(aSlots, 0); aReason := 'unexpected reflection decoder failure: ' + E.Message; Result := rdsMalformed; end;
     end;
-    lSize := PCardinal(PByte(aBasePtr) + lPos + 4)^;
-    Inc(lPos, 8);
-    if lSize > NativeUInt(aEndPtr) - NativeUInt(aBasePtr) - lPos then begin
-      aReason := 'truncated reflection chunk payload';
-      Exit(rdsMalformed);
-    end;
-    Inc(lPos, lSize);
+  finally
+    wbReflectionWalkerActive := False;
   end;
-  if lPos <> NativeUInt(aEndPtr) - NativeUInt(aBasePtr) then begin
-    aReason := 'reflection stream extent mismatch';
-    Exit(rdsMalformed);
-  end;
-
-  // The schema-backed recursive walker is intentionally introduced as the
-  // remap gate: unknown classes, sentinels, selectors, and USER serializers
-  // remain non-mutating until the sibling element tree can be traversed.
-  aReason := 'reflection schema walker is unavailable for this payload leaf';
-  Result := rdsUnsupported;
 end;
 
 function wbReflectionElementDecodeStatus(const aReflElement: IwbElement;
