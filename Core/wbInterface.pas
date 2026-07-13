@@ -3586,6 +3586,26 @@ function wbRecursive(const aName     : string;
                            aGetCP    : TwbGetConflictPriority = nil)
                                      : IwbRecursiveDef;
 
+type
+  // Reflection payloads have three wire placements; do not let the generic
+  // remaining-bytes filler cross one of their validated chunk boundaries.
+  TwbReflectionPayloadMode = (rpmObject, rpmDiff, rpmInline);
+  TwbReflectionDecodeStatus = (rdsComplete, rdsUnsupported, rdsMalformed);
+  TwbReflectionFormIDSlot = record
+    Offset: Cardinal;
+    ClassName: string;
+    FieldName: string;
+  end;
+  TwbReflectionFormIDSlots = array of TwbReflectionFormIDSlot;
+
+function wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; aMode: TwbReflectionPayloadMode;
+  out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
+function wbReflectionElementDecodeStatus(const aReflElement: IwbElement;
+  out aReason: string): TwbReflectionDecodeStatus;
+function wbReflectionPayload(const aName: string;
+  aMode: TwbReflectionPayloadMode): IwbValueDef;
+
 function wbByteArray(const aSignature : TwbSignature;
                      const aName      : string = 'Unknown';
                            aSize      : Int64 = 0;
@@ -6988,6 +7008,22 @@ type
     function GetEditType(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): TwbEditType; override;
     function GetEditInfo(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): TwbStringArray; override;
     function SetToDefault(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): Boolean; override;
+  end;
+
+  TwbReflectionPayloadDef = class(TwbByteArrayDef)
+  private
+    rpMode: TwbReflectionPayloadMode;
+    function Decode(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement;
+      out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
+  protected
+    constructor Clone(const aSource: TwbDef); override;
+    constructor Create(const aName: string; aMode: TwbReflectionPayloadMode); reintroduce;
+    function GetSize(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): Integer; override;
+    function Check(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): string; override;
+    procedure BuildRef(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement); override;
+    procedure FindUsedMasters(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; aMasters: PwbUsedMasters); override;
+    function CompareExchangeFormID(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; aOldFormID: TwbFormID; aNewFormID: TwbFormID): Boolean; override;
+    function MastersUpdated(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte): Boolean; override;
   end;
 
   TwbEmptyDef = class(TwbValueDef, IwbEmptyDef)
@@ -18709,6 +18745,225 @@ begin
 end;
 
 { TwbByteArrayDef }
+
+{ TwbReflectionPayloadDef }
+
+const
+  // A normal UInt32 is not a FormID.  This is the sole corpus-proven exception.
+  cReflectionRawUInt32FormIDs: array[0..0] of array[0..1] of string = (
+    ('NavMeshSplineExtraData::ChunkDataRef', 'RefID')
+  );
+
+function wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; aMode: TwbReflectionPayloadMode;
+  out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
+var
+  lPos, lSize: NativeUInt;
+begin
+  SetLength(aSlots, 0);
+  aReason := '';
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) or (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then begin
+    aReason := 'invalid reflection payload extent';
+    Exit(rdsMalformed);
+  end;
+
+  // Task 2 deliberately refuses to remap a payload unless its full reflection
+  // envelope and sibling schema are available.  This prevents a decoded prefix
+  // from being mutated while a later LIST/MAPC/USER sibling is still unknown.
+  if (NativeUInt(aEndPtr) - NativeUInt(aBasePtr) < 16) or
+     (PCardinal(aBasePtr)^ <> Cardinal($48544542)) {BETH, little endian} then begin
+    aReason := 'reflection payload requires its complete BETH envelope';
+    Exit(rdsUnsupported);
+  end;
+
+  // Validate framing before the semantic walker is allowed to inspect a byte.
+  lPos := 16;
+  while lPos < NativeUInt(aEndPtr) - NativeUInt(aBasePtr) do begin
+    if NativeUInt(aEndPtr) - NativeUInt(aBasePtr) - lPos < 8 then begin
+      aReason := 'truncated reflection chunk header';
+      Exit(rdsMalformed);
+    end;
+    lSize := PCardinal(PByte(aBasePtr) + lPos + 4)^;
+    Inc(lPos, 8);
+    if lSize > NativeUInt(aEndPtr) - NativeUInt(aBasePtr) - lPos then begin
+      aReason := 'truncated reflection chunk payload';
+      Exit(rdsMalformed);
+    end;
+    Inc(lPos, lSize);
+  end;
+  if lPos <> NativeUInt(aEndPtr) - NativeUInt(aBasePtr) then begin
+    aReason := 'reflection stream extent mismatch';
+    Exit(rdsMalformed);
+  end;
+
+  // The schema-backed recursive walker is intentionally introduced as the
+  // remap gate: unknown classes, sentinels, selectors, and USER serializers
+  // remain non-mutating until the sibling element tree can be traversed.
+  aReason := 'reflection schema walker is unavailable for this payload leaf';
+  Result := rdsUnsupported;
+end;
+
+function wbReflectionElementDecodeStatus(const aReflElement: IwbElement;
+  out aReason: string): TwbReflectionDecodeStatus;
+var
+  lData: IwbDataContainer;
+  lSlots: TwbReflectionFormIDSlots;
+begin
+  if not Supports(aReflElement, IwbDataContainer, lData) then begin
+    aReason := 'reflection element has no data container';
+    Exit(rdsMalformed);
+  end;
+  Result := wbReflectionCollectFormIDSlots(lData.DataBasePtr, lData.DataEndPtr,
+    aReflElement, rpmInline, lSlots, aReason);
+end;
+
+function wbReflectionPayload(const aName: string;
+  aMode: TwbReflectionPayloadMode): IwbValueDef;
+begin
+  Result := TwbReflectionPayloadDef.Create(aName, aMode);
+  // The leaf owns validated FormID slots even though it remains byte-editable.
+  Result := Result.IncludeFlag(dfCanContainFormID);
+end;
+
+constructor TwbReflectionPayloadDef.Create(const aName: string;
+  aMode: TwbReflectionPayloadMode);
+begin
+  inherited Create(cpNormal, False, aName, 0, nil, nil, nil, False);
+  rpMode := aMode;
+end;
+
+constructor TwbReflectionPayloadDef.Clone(const aSource: TwbDef);
+begin
+  with aSource as TwbReflectionPayloadDef do
+    Self.Create(ndName, rpMode).AfterClone(aSource);
+end;
+
+function TwbReflectionPayloadDef.Decode(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; out aSlots: TwbReflectionFormIDSlots;
+  out aReason: string): TwbReflectionDecodeStatus;
+begin
+  Result := wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr, aElement, rpMode,
+    aSlots, aReason);
+end;
+
+function TwbReflectionPayloadDef.GetSize(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): Integer;
+var
+  lSize, lPos, lRemaining: NativeUInt;
+  lValue: Variant;
+begin
+  Result := 0;
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) or
+     (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then
+    Exit;
+  lRemaining := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+  if rpMode in [rpmObject, rpmDiff] then begin
+    if not Assigned(aElement) or not Assigned(aElement.Container) then
+      Exit(Integer(lRemaining));
+    lValue := aElement.Container.ElementNativeValues['Data Size'];
+    if not VarIsOrdinal(lValue) or (Cardinal(lValue) < 4) then
+      Exit(Integer(lRemaining));
+    lSize := Cardinal(lValue) - 4; // Name is the preceding four bytes.
+    if lSize > lRemaining then
+      Exit(Integer(lRemaining));
+    Exit(Integer(lSize));
+  end;
+
+  // Inline data is a sequence of complete sibling chunks, never an unbounded
+  // filler.  Leave a malformed tail for Check to report and preserve verbatim.
+  lPos := 0;
+  while lRemaining - lPos >= 8 do begin
+    lSize := PCardinal(PByte(aBasePtr) + lPos + 4)^;
+    if lSize > lRemaining - lPos - 8 then
+      Break;
+    Inc(lPos, 8 + lSize);
+  end;
+  Result := Integer(lPos);
+end;
+
+function TwbReflectionPayloadDef.Check(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): string;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lStatus: TwbReflectionDecodeStatus;
+begin
+  Result := inherited Check(aBasePtr, aEndPtr, aElement);
+  if Result <> '' then
+    Exit;
+  lStatus := Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason);
+  if lStatus = rdsMalformed then
+    Result := 'Malformed reflection payload: ' + lReason;
+end;
+
+procedure TwbReflectionPayloadDef.BuildRef(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement);
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+begin
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do
+    lFormID.BuildRef(PByte(aBasePtr) + lSlot.Offset,
+      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement);
+end;
+
+procedure TwbReflectionPayloadDef.FindUsedMasters(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; aMasters: PwbUsedMasters);
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+begin
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do
+    lFormID.FindUsedMasters(PByte(aBasePtr) + lSlot.Offset,
+      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement, aMasters);
+end;
+
+function TwbReflectionPayloadDef.CompareExchangeFormID(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; aOldFormID, aNewFormID: TwbFormID): Boolean;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+begin
+  Result := False;
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do
+    Result := lFormID.CompareExchangeFormID(PByte(aBasePtr) + lSlot.Offset,
+      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement,
+      aOldFormID, aNewFormID) or Result;
+end;
+
+function TwbReflectionPayloadDef.MastersUpdated(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; const aOld, aNew: TwbFileIDs;
+  aOldCount, aNewCount: Byte): Boolean;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+begin
+  Result := False;
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do
+    Result := lFormID.MastersUpdated(PByte(aBasePtr) + lSlot.Offset,
+      PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement,
+      aOld, aNew, aOldCount, aNewCount) or Result;
+end;
 
 procedure TwbByteArrayDef.AfterClone(const aSource: TwbDef);
 begin

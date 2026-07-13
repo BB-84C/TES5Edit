@@ -5915,7 +5915,7 @@ begin
       wbString('Signature', 4),
       wbInteger('Data Size', itU32),
       wbInteger('Name', itS32, wbREFLStringToStr, wbREFLStringToInt),
-      wbUnknown
+      wbReflectionPayload('Object Data', rpmObject)
     ]);
 
   var wbREFLDIFF :=
@@ -5923,7 +5923,7 @@ begin
       wbString('Signature', 4),
       wbInteger('Data Size', itU32),
       wbInteger('Name', itS32, wbREFLStringToStr, wbREFLStringToInt),
-      wbUnknown
+      wbReflectionPayload('Diff Data', rpmDiff)
     ]);
 
   var wbREFL :=
@@ -5933,7 +5933,7 @@ begin
       wbREFLTYPE,
       wbREFLCLAS,
       wbREFLOBJT,
-      wbUnknown
+      wbReflectionPayload('Trailing Reflection Chunks', rpmInline)
     ]).IncludeFlag(dfCanContainFormID)
       .IncludeFlag(dfCanContainReflection)
       .IncludeFlag(dfDontAssign, wbStarfieldReverseEngineeringIncomplete)
@@ -5948,7 +5948,7 @@ begin
       wbREFLTYPE,
       wbREFLCLAS,
       wbREFLDIFF,
-      wbUnknown
+      wbReflectionPayload('Trailing Reflection Chunks', rpmInline)
     ]).IncludeFlag(dfCanContainFormID)
       .IncludeFlag(dfCanContainReflection)
       .IncludeFlag(dfDontAssign, wbStarfieldReverseEngineeringIncomplete)
@@ -5974,7 +5974,7 @@ begin
         wbREFLSTRT,
         wbREFLTYPE,
         wbREFLCLAS,
-        wbUnknown
+        wbReflectionPayload('Inline Reflection Data', rpmInline)
       ]).IncludeFlag(dfCanContainFormID)
         .IncludeFlag(dfCanContainReflection)
         .IncludeFlag(dfDontAssign, wbStarfieldReverseEngineeringIncomplete)
