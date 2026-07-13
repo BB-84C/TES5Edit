@@ -246,6 +246,7 @@ AGENTS.md
 
 # Local agent workflow artifacts (per AGENTS.md, not upstream payload)
 /.opencode/
+/.superpowers/
 /ROADMAP.md
 /docs/plans/
 /docs/notes/phase*-*
