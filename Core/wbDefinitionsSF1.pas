@@ -1801,6 +1801,38 @@ begin
     Exit(6);
 end;
 
+function wbLGDI8CountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
+var
+  lContainer : IwbContainer;
+  lSubRecord : IwbSubRecord;
+begin
+  Result := 0;
+  if not wbTryGetContainerFromUnion(aElement, lContainer) then
+    Exit;
+  lContainer := lContainer.Container;
+  if not Assigned(lContainer) or not Supports(lContainer, IwbSubRecord, lSubRecord) then
+    Exit;
+  if (lSubRecord.DataSize mod 8) <> 0 then
+    Exit;
+  Result := lSubRecord.DataSize div 8;
+end;
+
+function wbLGDI12CountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
+var
+  lContainer : IwbContainer;
+  lSubRecord : IwbSubRecord;
+begin
+  Result := 0;
+  if not wbTryGetContainerFromUnion(aElement, lContainer) then
+    Exit;
+  lContainer := lContainer.Container;
+  if not Assigned(lContainer) or not Supports(lContainer, IwbSubRecord, lSubRecord) then
+    Exit;
+  if (lSubRecord.DataSize mod 12) <> 0 then
+    Exit;
+  Result := lSubRecord.DataSize div 12;
+end;
+
 function wbBFCDAT2Decider(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Integer;
 var
   lContainer           : IwbContainer;
@@ -2867,6 +2899,9 @@ const
   );
 
 procedure DefineSF1;
+const
+  lPinnedMasterFile = 'SFBGS00D.esm';
+  lPinnedObjectID   = $033E3D;
 begin
   DefineCommon;
 
@@ -16769,8 +16804,8 @@ begin
     wbGenericModel(True),
     wbFULL,
     wbEmpty(DATA).SetRequired,
-    wbFormIDCk(ANAM, 'Base Object List', [LVLI]),
-    wbFormIDCk(MNAM, 'Base Object List 2', [LVLI]),
+    wbFormID(ANAM, 'Base Object List'),
+    wbFormIDCk(MNAM, 'AddInto Merge Target', [LGDI]),
     wbFormIDCk(ENAM, 'Rank Template', [LGDI]),
 
     wbLGDIStarSlotArray(BNAM,
@@ -16789,20 +16824,52 @@ begin
     wbLGDIFilter(CNAM, 'Include Filter'),
     wbLGDIFilter(DNAM, 'Exclude Filter'),
 
-    // SF 1.16 DLC Legendary Item records carry additional filter/rank payloads
-    // after the base star-slot filters. Keep the newly observed tails opaque
-    // until their CK semantics are known, but decode the repeated CITC/CTDA
-    // condition sets so load-order noise does not hide real schema problems.
-    wbByteArray(LNAM, 'Filter Data'),
+    // These tails are fixed-stride rows; the existing CITC/CTDA condition
+    // block remains between LNAM and the reference-bearing rows. The final
+    // FNAM/KNAM/JNAM word is a
+    // FormID only for the byte-verified SFBGS00D anchor; all other values,
+    // including $0000000F, remain non-remappable scalar tags.
+    wbArray(LNAM, 'Filter Data',
+      wbStruct('Filter Datum', [
+        wbInteger('Group', itU32),
+        wbInteger('Index', itU32)
+      ]), [], wbLGDI8CountCallback),
     wbRStructs('Filter Conditions', 'Condition Set', [
       wbCITCReq,
       wbConditions.SetRequired
     ]),
-    wbByteArray(FNAM, 'Opaque FNAM Tail'),
-    wbByteArray(KNAM, 'Opaque KNAM Tail'),
-    wbByteArray(GNAM, 'Opaque GNAM Tail'),
-    wbByteArray(HNAM, 'Opaque HNAM Tail'),
-    wbByteArray(JNAM, 'Opaque JNAM Tail')
+    wbArray(FNAM, 'FNAM Rows',
+      wbStruct('FNAM Row', [
+        wbInteger('Star Slot', itU32),
+        wbInteger('Value', itU32),
+        wbInteger('Tag or FormID', itU32,
+          wbConditionalFormIDByMasterObject(lPinnedMasterFile, lPinnedObjectID))
+      ]), [], wbLGDI12CountCallback),
+    wbArray(KNAM, 'KNAM Rows',
+      wbStruct('KNAM Row', [
+        wbInteger('Star Slot', itU32),
+        wbInteger('Value', itU32),
+        wbInteger('Tag or FormID', itU32,
+          wbConditionalFormIDByMasterObject(lPinnedMasterFile, lPinnedObjectID))
+      ]), [], wbLGDI12CountCallback),
+    wbArray(GNAM, 'GNAM References',
+      wbStruct('GNAM Reference', [
+        wbInteger('Star Slot', itU32),
+        wbFormID('Reference')
+      ]), [], wbLGDI8CountCallback),
+    wbArray(HNAM, 'HNAM References',
+      wbStruct('HNAM Reference', [
+        wbInteger('Star Slot', itU32),
+        wbInteger('Value', itU32),
+        wbFormID('Reference')
+      ]), [], wbLGDI12CountCallback),
+    wbArray(JNAM, 'JNAM Rows',
+      wbStruct('JNAM Row', [
+        wbInteger('Star Slot', itU32),
+        wbInteger('Value', itU32),
+        wbInteger('Tag or FormID', itU32,
+          wbConditionalFormIDByMasterObject(lPinnedMasterFile, lPinnedObjectID))
+      ]), [], wbLGDI12CountCallback)
   ]);
 
   { still exists in game code, but not in Starfield.esm }

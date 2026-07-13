@@ -4625,6 +4625,10 @@ function wbData6Key2Enum(const aNames : array of string)
 
 function wbFormID: IwbFormID; overload;
 
+function wbConditionalFormIDByMasterObject(const aMasterFile: string;
+                                                 aObjectID  : Cardinal)
+                                                            : IwbFormID;
+
 function wbFormID(const aValidRefs : TwbSignatures;
                         aPersistent: Boolean)
                                    : IwbFormID; overload;
@@ -7532,6 +7536,38 @@ type
     procedure AfterConstruction; override;
   end;
 
+  TwbConditionalFormIDByMasterObjectFormater = class(TwbFormIDDefFormater)
+  private
+    cfidMasterFile : string;
+    cfidObjectID   : Cardinal;
+
+    function IsAnchorMainRecord(const aMainRecord: IwbMainRecord): Boolean;
+    function IsCurrentAnchor(aInt: Int64; const aElement: IwbElement): Boolean;
+    function IsLoadOrderAnchor(const aFormID: TwbFormID; const aElement: IwbElement): Boolean;
+    function IsOldAnchor(aInt: Int64; const aOld, aNew: TwbFileIDs; const aElement: IwbElement): Boolean;
+  protected
+    constructor Clone(const aSource: TwbDef); override;
+    constructor Create(const aMasterFile: string; aObjectID: Cardinal); reintroduce;
+
+    function IsValidMainRecord(const aMainRecord: IwbMainRecord): Boolean; override;
+    function GetExactIdentString: string; override;
+
+    function Assign(const aTarget: IwbElement; aIndex: Integer; const aSource: IwbElement; aOnlySK: Boolean): IwbElement; override;
+    procedure BuildRef(aInt: Int64; const aElement: IwbElement); override;
+    function Check(aInt: Int64; const aElement: IwbElement): string; override;
+    procedure FindUsedMasters(aInt: Int64; aMasters: PwbUsedMasters; const aElement: IwbElement); override;
+    function GetIsEditable(aInt: Int64; const aElement: IwbElement): Boolean; override;
+    function GetLinksTo(aInt: Int64; const aElement: IwbElement): IwbElement; override;
+    function GetMainRecord(aInt: Int64; const aElement: IwbElement): IwbMainRecord; override;
+
+    function MastersUpdated(aInt: Int64; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte; const aElement: IwbElement): Int64; override;
+    function CompareExchangeFormID(var aInt: Int64; aOldFormID: TwbFormID; aNewFormID: TwbFormID; const aElement: IwbElement): Boolean; override;
+
+    function ToEditValue(aInt: Int64; const aElement: IwbElement): string; override;
+    function ToSortKey(aInt: Int64; const aElement: IwbElement): string; override;
+    function ToString(aInt: Int64; const aElement: IwbElement; aForSummary: Boolean): string; override;
+  end;
+
   TwbRefID = class(TwbFormIDDefFormater, IwbRefID)
   protected
     {---IwbIntegerDefFormater---}
@@ -9730,6 +9766,13 @@ begin
       _FormID := TwbFormIDDefFormater.Create;
     Result := _FormID;
   end;
+end;
+
+function wbConditionalFormIDByMasterObject(const aMasterFile: string;
+                                                 aObjectID  : Cardinal)
+                                                            : IwbFormID;
+begin
+  Result := TwbConditionalFormIDByMasterObjectFormater.Create(aMasterFile, aObjectID);
 end;
 
 function wbFormID(const aValidRefs : TwbSignatures;
@@ -18743,6 +18786,234 @@ begin
       end;
   end;
   Used(aElement, Result);
+end;
+
+{ TwbConditionalFormIDByMasterObjectFormater }
+
+function TwbConditionalFormIDByMasterObjectFormater.Assign(const aTarget: IwbElement; aIndex: Integer; const aSource: IwbElement; aOnlySK: Boolean): IwbElement;
+begin
+  Result := nil;
+  if not Assigned(aTarget) then
+    Exit;
+
+  if not Assigned(aSource) then begin
+    aTarget.NativeValue := 0;
+    Exit;
+  end;
+
+  var lMainRecord: IwbMainRecord;
+  if Supports(aSource, IwbMainRecord, lMainRecord) then begin
+    // Record assignment is safe only for the one identity whose ordinal is a
+    // real FormID; arbitrary records must never convert an opaque tag.
+    if IsAnchorMainRecord(lMainRecord) then
+      Result := inherited Assign(aTarget, aIndex, aSource, aOnlySK);
+    Exit;
+  end;
+
+  if IsCurrentAnchor(aSource.NativeValue, aSource) then begin
+    Result := inherited Assign(aTarget, aIndex, aSource, aOnlySK);
+    Exit;
+  end;
+
+  // Non-anchor values are opaque ordinals. Copying the native value avoids
+  // applying source-file/target-file master conversion to a scalar tag.
+  aTarget.NativeValue := aSource.NativeValue;
+end;
+
+procedure TwbConditionalFormIDByMasterObjectFormater.BuildRef(aInt: Int64; const aElement: IwbElement);
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    inherited;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.Check(aInt: Int64; const aElement: IwbElement): string;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else
+    Result := '';
+end;
+
+constructor TwbConditionalFormIDByMasterObjectFormater.Clone(const aSource: TwbDef);
+begin
+  with aSource as TwbConditionalFormIDByMasterObjectFormater do
+    Self.Create(cfidMasterFile, cfidObjectID).AfterClone(aSource);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.CompareExchangeFormID(var aInt: Int64; aOldFormID, aNewFormID: TwbFormID; const aElement: IwbElement): Boolean;
+begin
+  // A generic replace operation may propose any record. Preserve the opaque
+  // arm unless both sides resolve to the independently pinned identity.
+  if IsCurrentAnchor(aInt, aElement) and IsLoadOrderAnchor(aNewFormID, aElement) then
+    Result := inherited
+  else
+    Result := False;
+end;
+
+constructor TwbConditionalFormIDByMasterObjectFormater.Create(const aMasterFile: string; aObjectID: Cardinal);
+begin
+  cfidMasterFile := aMasterFile;
+  cfidObjectID := aObjectID;
+  inherited Create;
+end;
+
+procedure TwbConditionalFormIDByMasterObjectFormater.FindUsedMasters(aInt: Int64; aMasters: PwbUsedMasters; const aElement: IwbElement);
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    inherited;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.GetExactIdentString: string;
+begin
+  Result := inherited GetExactIdentString + '|' + cfidMasterFile + '|' + IntToHex(cfidObjectID, 6);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.GetIsEditable(aInt: Int64; const aElement: IwbElement): Boolean;
+begin
+  Result := IsCurrentAnchor(aInt, aElement) and inherited GetIsEditable(aInt, aElement);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.GetLinksTo(aInt: Int64; const aElement: IwbElement): IwbElement;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else
+    Result := nil;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.GetMainRecord(aInt: Int64; const aElement: IwbElement): IwbMainRecord;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else
+    Result := nil;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.IsAnchorMainRecord(const aMainRecord: IwbMainRecord): Boolean;
+begin
+  Result := False;
+  if not Assigned(aMainRecord) then
+    Exit;
+
+  var lMasterRecord := aMainRecord.MasterOrSelf;
+  if not Assigned(lMasterRecord) or (lMasterRecord.FixedFormID.ObjectID <> cfidObjectID) then
+    Exit;
+
+  var lMasterFile := lMasterRecord._File;
+  Result := Assigned(lMasterFile) and SameText(lMasterFile.FileName, cfidMasterFile);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.IsCurrentAnchor(aInt: Int64; const aElement: IwbElement): Boolean;
+begin
+  Result := False;
+  var lFormID := TwbFormID.FromCardinal(aInt);
+  if (lFormID.ObjectID <> cfidObjectID) or not Assigned(aElement) then
+    Exit;
+
+  var lFile := aElement._File;
+  if not Assigned(lFile) then
+    Exit;
+
+  try
+    // The current master table is authoritative here even while a stale
+    // element is being visited during a master-list update.
+    var lMasterFile := lFile.GetMasterForFileID(lFormID.FileID, True, True);
+    Result := Assigned(lMasterFile) and SameText(lMasterFile.FileName, cfidMasterFile);
+  except
+    Result := False;
+  end;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.IsLoadOrderAnchor(const aFormID: TwbFormID; const aElement: IwbElement): Boolean;
+begin
+  Result := False;
+  if (aFormID.ObjectID <> cfidObjectID) or not Assigned(aElement) then
+    Exit;
+
+  var lFile := aElement._File;
+  if not Assigned(lFile) then
+    Exit;
+
+  try
+    Result := IsAnchorMainRecord(wbRecordByLoadOrderFormID(aFormID, lFile));
+  except
+    Result := False;
+  end;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.IsOldAnchor(aInt: Int64; const aOld, aNew: TwbFileIDs; const aElement: IwbElement): Boolean;
+begin
+  Result := False;
+  var lFormID := TwbFormID.FromCardinal(aInt);
+  if (lFormID.ObjectID <> cfidObjectID) or not Assigned(aElement) then
+    Exit;
+
+  var lFile := aElement._File;
+  if not Assigned(lFile) then
+    Exit;
+
+  try
+    var lMasterFile: IwbFile;
+    if lFile.IsNewRecord(lFormID.FileID, False) then
+      lMasterFile := lFile
+    else begin
+      // aInt still uses the old file slot. Translate that slot through the
+      // exact old->new pair supplied by MastersUpdated before consulting the
+      // current table; looking only at the current slot can misclassify a tag.
+      var lCurrentFileID := lFormID.FileID;
+      for var lIndex := Low(aOld) to High(aOld) do
+        if aOld[lIndex] = lFormID.FileID then begin
+          if lIndex <= High(aNew) then
+            lCurrentFileID := aNew[lIndex];
+          Break;
+        end;
+      lMasterFile := lFile.GetMasterForFileID(lCurrentFileID, True, False);
+    end;
+    Result := Assigned(lMasterFile) and SameText(lMasterFile.FileName, cfidMasterFile);
+  except
+    Result := False;
+  end;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.IsValidMainRecord(const aMainRecord: IwbMainRecord): Boolean;
+begin
+  Result := IsAnchorMainRecord(aMainRecord);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.MastersUpdated(aInt: Int64; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte; const aElement: IwbElement): Int64;
+begin
+  // Only an identity that was the anchor under the old mapping receives the
+  // normal FormID fixup. Every other third word is immutable scalar data.
+  if IsOldAnchor(aInt, aOld, aNew, aElement) then
+    Result := inherited
+  else
+    Result := aInt;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.ToEditValue(aInt: Int64; const aElement: IwbElement): string;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else
+    Result := IntToHex64(aInt, 8);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.ToSortKey(aInt: Int64; const aElement: IwbElement): string;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else
+    Result := IntToHex64(aInt, 8);
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.ToString(aInt: Int64; const aElement: IwbElement; aForSummary: Boolean): string;
+begin
+  if IsCurrentAnchor(aInt, aElement) then
+    Result := inherited
+  else begin
+    Result := IntToHex64(aInt, 8);
+    Used(aElement, Result);
+  end;
 end;
 
 { TwbByteArrayDef }
