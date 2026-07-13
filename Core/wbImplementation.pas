@@ -7077,11 +7077,22 @@ begin
   if not Assigned(lDef) or not (dfCanContainReflection in lDef.DefFlags) then
     Exit;
 
-  // If this container IS a reflection stream, decide by inspecting its CLAS for form-
-  // references. Do NOT delegate to the flag-only leaf check (that treats every
-  // reflection stream as present, which is the wrong signal for safety).
+  // If this container IS a reflection stream, decide by decode status. Step 2B replaced
+  // the schema-only "any CLAS declares a Ref field -> unsafe" check with a wire-walker
+  // decision: a reflection stream is safe to copy IFF the walker fully decodes it and
+  // locates every FormID slot (rdsComplete) - those slots are remapped natively on copy.
+  // Unsupported or malformed grammar stays unsafe (fail-closed), preserving the old
+  // "cannot verify -> unsafe" guarantee for any stream the walker cannot fully own.
   if dfIsReflection in lDef.DefFlags then begin
-    Result := wbReflectionElementContainsFormRef(Self);
+    var lReason: string;
+    case wbReflectionElementDecodeStatus(Self, lReason) of
+      rdsComplete:
+        Result := False;
+      rdsUnsupported, rdsMalformed:
+        Result := True;
+    else
+      Result := True;
+    end;
     Exit;
   end;
 
