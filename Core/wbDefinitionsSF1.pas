@@ -1803,34 +1803,39 @@ end;
 
 function wbLGDI8CountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
 var
-  lContainer : IwbContainer;
-  lSubRecord : IwbSubRecord;
+  PayloadSize: NativeUInt;
 begin
+  // Count fixed 8-byte rows straight from the array data span, mirroring
+  // wbQUPACountCallback. The earlier wbTryGetContainerFromUnion/.Container.DataSize
+  // approach returned 0 at runtime for these non-union subrecord arrays (the union
+  // helper does not resolve in this context), which collapsed every LGDI tail to an
+  // empty array and hid the reference rows from copy/remap. Semantic E2E caught it.
   Result := 0;
-  if not wbTryGetContainerFromUnion(aElement, lContainer) then
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) then
     Exit;
-  lContainer := lContainer.Container;
-  if not Assigned(lContainer) or not Supports(lContainer, IwbSubRecord, lSubRecord) then
+  if NativeUInt(aEndPtr) < NativeUInt(aBasePtr) then
     Exit;
-  if (lSubRecord.DataSize mod 8) <> 0 then
-    Exit;
-  Result := lSubRecord.DataSize div 8;
+  PayloadSize := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+  if (PayloadSize mod 8) <> 0 then
+    Exit; // non-aligned -> fail closed to 0
+  Result := PayloadSize div 8;
 end;
 
 function wbLGDI12CountCallback(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Cardinal;
 var
-  lContainer : IwbContainer;
-  lSubRecord : IwbSubRecord;
+  PayloadSize: NativeUInt;
 begin
+  // Count fixed 12-byte rows straight from the array data span (see
+  // wbLGDI8CountCallback for why the wbTryGetContainerFromUnion approach failed).
   Result := 0;
-  if not wbTryGetContainerFromUnion(aElement, lContainer) then
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) then
     Exit;
-  lContainer := lContainer.Container;
-  if not Assigned(lContainer) or not Supports(lContainer, IwbSubRecord, lSubRecord) then
+  if NativeUInt(aEndPtr) < NativeUInt(aBasePtr) then
     Exit;
-  if (lSubRecord.DataSize mod 12) <> 0 then
-    Exit;
-  Result := lSubRecord.DataSize div 12;
+  PayloadSize := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+  if (PayloadSize mod 12) <> 0 then
+    Exit; // non-aligned -> fail closed to 0
+  Result := PayloadSize div 12;
 end;
 
 function wbBFCDAT2Decider(aBasePtr: Pointer; aEndPtr: Pointer; const aElement: IwbElement): Integer;
