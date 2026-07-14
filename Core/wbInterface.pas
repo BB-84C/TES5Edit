@@ -18871,7 +18871,15 @@ end;
 
 function TwbConditionalFormIDByMasterObjectFormater.GetIsEditable(aInt: Int64; const aElement: IwbElement): Boolean;
 begin
-  Result := IsCurrentAnchor(aInt, aElement) and inherited GetIsEditable(aInt, aElement);
+  // During records.copy_into the target leaf is still SetToDefault(0), so an
+  // anchor-only gate makes CanAssign=False for every row (the discriminator sees
+  // the target's zero, not the source), skipping the value-copy and leaving word3
+  // at 0 for BOTH anchor and scalar rows. A copy in progress is an internal write,
+  // not a GUI edit: allow it so the Assign override can rebase the anchor and
+  // bit-copy the scalar. Non-anchor GUI editability stays disabled outside copy.
+  // (Semantic E2E RED #2 root cause: editability gate was starving a correct Assign.)
+  Result := (IsCurrentAnchor(aInt, aElement) or (wbCopyIsRunning > 0))
+            and inherited GetIsEditable(aInt, aElement);
 end;
 
 function TwbConditionalFormIDByMasterObjectFormater.GetLinksTo(aInt: Int64; const aElement: IwbElement): IwbElement;
