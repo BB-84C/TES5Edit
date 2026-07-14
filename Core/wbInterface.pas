@@ -7563,6 +7563,7 @@ type
     function MastersUpdated(aInt: Int64; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte; const aElement: IwbElement): Int64; override;
     function CompareExchangeFormID(var aInt: Int64; aOldFormID: TwbFormID; aNewFormID: TwbFormID; const aElement: IwbElement): Boolean; override;
 
+    function FromEditValue(const aValue: string; const aElement: IwbElement): Int64; override;
     function ToEditValue(aInt: Int64; const aElement: IwbElement): string; override;
     function ToSortKey(aInt: Int64; const aElement: IwbElement): string; override;
     function ToString(aInt: Int64; const aElement: IwbElement; aForSummary: Boolean): string; override;
@@ -18988,6 +18989,20 @@ begin
     Result := inherited
   else
     Result := aInt;
+end;
+
+function TwbConditionalFormIDByMasterObjectFormater.FromEditValue(const aValue: string; const aElement: IwbElement): Int64;
+begin
+  // TwbValue.SetEditValue only gates on wbEditAllowed, not on this formatter's
+  // GetIsEditable, so a non-GUI/automation write can reach here for a non-anchor
+  // tag. Only the current anchor uses the inherited FormID-string parse; every
+  // other value is parsed as a raw ordinal (round-trips with this formatter's
+  // IntToHex64 ToEditValue) so an opaque scalar tag is never reinterpreted as a
+  // FormID.
+  if Assigned(aElement) and IsCurrentAnchor(aElement.NativeValue, aElement) then
+    Result := inherited
+  else
+    Result := StrToInt64('$' + Trim(aValue));
 end;
 
 function TwbConditionalFormIDByMasterObjectFormater.ToEditValue(aInt: Int64; const aElement: IwbElement): string;
