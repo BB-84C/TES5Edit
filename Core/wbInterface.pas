@@ -3597,12 +3597,18 @@ type
     FieldName: string;
   end;
   TwbReflectionFormIDSlots = array of TwbReflectionFormIDSlot;
+  TwbReflectionTargetSignature = record
+    ClassName: PChar;
+    FieldName: PChar;
+    Signature: TwbSignature;
+  end;
 
 function wbReflectionCollectFormIDSlots(aBasePtr, aEndPtr: Pointer;
   const aElement: IwbElement; aMode: TwbReflectionPayloadMode;
   out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
 function wbReflectionElementDecodeStatus(const aReflElement: IwbElement;
   out aReason: string): TwbReflectionDecodeStatus;
+function wbReflectionTargetSignatures(const aClass, aField: string): TwbSignatures;
 function wbReflectionPayload(const aName: string;
   aMode: TwbReflectionPayloadMode): IwbValueDef;
 
@@ -7019,9 +7025,13 @@ type
     rpMode: TwbReflectionPayloadMode;
     function Decode(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement;
       out aSlots: TwbReflectionFormIDSlots; out aReason: string): TwbReflectionDecodeStatus;
+    function TrySlotsToString(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement;
+      out aValue: string): Boolean;
   protected
     constructor Clone(const aSource: TwbDef); override;
     constructor Create(const aName: string; aMode: TwbReflectionPayloadMode); reintroduce;
+    function ToString(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): string; override;
+    function ToSummary(aDepth: Integer; aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; var aLinksTo: IwbElement): string; override;
     function GetSize(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): Integer; override;
     function Check(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): string; override;
     procedure BuildRef(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement); override;
@@ -7029,6 +7039,10 @@ type
     function CompareExchangeFormID(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; aOldFormID: TwbFormID; aNewFormID: TwbFormID): Boolean; override;
     function MastersUpdated(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; const aOld, aNew: TwbFileIDs; aOldCount, aNewCount: Byte): Boolean; override;
     function Assign(const aTarget: IwbElement; aIndex: Integer; const aSource: IwbElement; aOnlySK: Boolean): IwbElement; override;
+    function ToEditValue(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): string; override;
+    procedure FromEditValue(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement; const aValue: string); override;
+    function GetIsEditable(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): Boolean; override;
+    function GetEditType(aBasePtr, aEndPtr: Pointer; const aElement: IwbElement): TwbEditType; override;
   end;
 
   TwbEmptyDef = class(TwbValueDef, IwbEmptyDef)
@@ -19568,6 +19582,244 @@ begin
     aSlots, aReason);
 end;
 
+const
+  // Best-effort inference from field names + CommonLibSF; unmapped fields degrade
+  // to an unfiltered FormID; safe to extend.
+  wbReflectionTargetSignatureTable: array[0..17] of TwbReflectionTargetSignature = (
+    (ClassName: 'BSAttachConfig::LightAttachment'; FieldName: 'pLightForm'; Signature: 'LIGH'),
+    (ClassName: 'BSSequence::ImageSpaceTrack'; FieldName: 'pImageSpaceForm'; Signature: 'IMGS'),
+    (ClassName: 'BSSequence::ExplosionObjectSpawn'; FieldName: 'pExplosionForm'; Signature: 'EXPL'),
+    (ClassName: 'BSSequence::ImpactEffectTrack'; FieldName: 'pImpactDataSet'; Signature: 'IPDS'),
+    (ClassName: 'BGSAtmosphere::MiscSettings'; FieldName: 'pImageSpaceDay'; Signature: 'IMGS'),
+    (ClassName: 'BGSAtmosphere::MiscSettings'; FieldName: 'pImageSpaceNight'; Signature: 'IMGS'),
+    (ClassName: 'BGSAtmosphere::OverrideSettings'; FieldName: 'pSunPresetOverride'; Signature: 'SUNP'),
+    (ClassName: 'BGSGalaxy::BGSSunPresetForm'; FieldName: 'pParent'; Signature: 'SUNP'),
+    (ClassName: 'BGSWeatherSettingsForm'; FieldName: 'pParent'; Signature: 'WTHR'),
+    (ClassName: 'BGSWeatherSettingsForm'; FieldName: 'pDisplayNameKeyword'; Signature: 'KYWD'),
+    (ClassName: 'BGSWeatherSettingsForm'; FieldName: 'pImageSpace'; Signature: 'IMGS'),
+    (ClassName: 'BGSWeatherSettingsForm'; FieldName: 'pImageSpaceNight'; Signature: 'IMGS'),
+    (ClassName: 'BGSWeatherSettingsForm::MagicEffect'; FieldName: 'pSpell'; Signature: 'SPEL'),
+    (ClassName: 'BGSWeatherSettingsForm::SpellEffect'; FieldName: 'pTransitionSpell'; Signature: 'SPEL'),
+    (ClassName: 'BGSWeatherSettingsForm::SpellEffect'; FieldName: 'pMainSpell'; Signature: 'SPEL'),
+    (ClassName: 'BGSActorValueActivity'; FieldName: 'pTrackedActorValue'; Signature: 'AVIF'),
+    (ClassName: 'ActorValueSnapshot::ActorValueBinding'; FieldName: 'pSource'; Signature: 'AVIF'),
+    (ClassName: 'TESImageSpace'; FieldName: 'pParent'; Signature: 'IMGS')
+  );
+
+function wbReflectionTargetSignatures(const aClass, aField: string): TwbSignatures;
+var
+  i: Integer;
+begin
+  SetLength(Result, 0);
+  for i := Low(wbReflectionTargetSignatureTable) to High(wbReflectionTargetSignatureTable) do
+    if SameText(aClass, wbReflectionTargetSignatureTable[i].ClassName) and
+       SameText(aField, wbReflectionTargetSignatureTable[i].FieldName) then begin
+      SetLength(Result, 1);
+      Result[0] := wbReflectionTargetSignatureTable[i].Signature;
+      Exit;
+    end;
+end;
+
+function TwbReflectionPayloadDef.TrySlotsToString(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; out aValue: string): Boolean;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason, lSlotValue: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+  lSignatures: TwbSignatures;
+  lLength: NativeUInt;
+begin
+  Result := False;
+  aValue := '';
+  if not Assigned(aBasePtr) or not Assigned(aEndPtr) or
+     (NativeUInt(aBasePtr) > NativeUInt(aEndPtr)) then
+    Exit;
+
+  // A complete decode is the only proof that the embedded offsets are safe. Nested
+  // walker re-entry deliberately degrades here, so the callers retain the raw hex.
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+  if Length(lSlots) = 0 then
+    Exit;
+
+  lLength := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do begin
+    if NativeUInt(lSlot.Offset) + SizeOf(Cardinal) > lLength then begin
+      aValue := '';
+      Exit;
+    end;
+    lSlotValue := lSlot.ClassName + '.' + lSlot.FieldName + ' = ' +
+      lFormID.ToString(PByte(aBasePtr) + lSlot.Offset,
+        PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement);
+    lSignatures := wbReflectionTargetSignatures(lSlot.ClassName, lSlot.FieldName);
+    if Length(lSignatures) > 0 then
+      lSlotValue := lSlotValue + ' -> <' + lSignatures[0] + '>';
+    if aValue <> '' then
+      aValue := aValue + '; ';
+    aValue := aValue + lSlotValue;
+  end;
+  Result := True;
+end;
+
+function TwbReflectionPayloadDef.ToString(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): string;
+begin
+  if not TrySlotsToString(aBasePtr, aEndPtr, aElement, Result) then
+    // Undecodable payloads must remain inspectable byte-for-byte rather than being
+    // replaced by a partial decoded view.
+    Result := inherited ToString(aBasePtr, aEndPtr, aElement);
+end;
+
+function TwbReflectionPayloadDef.ToSummary(aDepth: Integer; aBasePtr,
+  aEndPtr: Pointer; const aElement: IwbElement; var aLinksTo: IwbElement): string;
+var
+  lValue: string;
+begin
+  if TrySlotsToString(aBasePtr, aEndPtr, aElement, lValue) then begin
+    Result := ShortenText(lValue);
+    if not Assigned(aLinksTo) and Assigned(aElement) then
+      aLinksTo := aElement.LinksTo;
+  end else
+    Result := inherited ToSummary(aDepth, aBasePtr, aEndPtr, aElement, aLinksTo);
+end;
+
+function TwbReflectionPayloadDef.ToEditValue(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): string;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lFormID: IwbIntegerDef;
+  lSlot: TwbReflectionFormIDSlot;
+begin
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then begin
+    // A failed decode never gets a synthetic editor value: preserve the raw bytes for
+    // inspection while GetIsEditable keeps that fail-closed representation read-only.
+    Result := inherited ToEditValue(aBasePtr, aEndPtr, aElement);
+    Exit;
+  end;
+
+  Result := '';
+  lFormID := wbFormID('Reflection FormID');
+  for lSlot in lSlots do begin
+    if Result <> '' then
+      Result := Result + #13#10;
+    Result := Result + lSlot.FieldName + '=' +
+      lFormID.ToEditValue(PByte(aBasePtr) + lSlot.Offset,
+        PByte(aBasePtr) + lSlot.Offset + SizeOf(Cardinal), aElement);
+  end;
+end;
+
+procedure TwbReflectionPayloadDef.FromEditValue(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement; const aValue: string);
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+  lLines: TStringList;
+  lValues: array of string;
+  lNewFormIDs: array of Cardinal;
+  lChanged: array of Boolean;
+  lFormID: IwbIntegerDef;
+  lFormater: IwbIntegerDefFormater;
+  lLength: NativeUInt;
+  i, lEquals: Integer;
+begin
+  // Re-decode the live leaf rather than caching offsets from its last display. A
+  // sibling edit can change the reflection stream between GUI refresh and commit.
+  if Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) <> rdsComplete then
+    Exit;
+
+  lLines := TStringList.Create;
+  try
+    lLines.Text := aValue;
+    if lLines.Count <> Length(lSlots) then
+      Exit;
+
+    lFormID := wbFormID('Reflection FormID');
+    // Use the wbFormID FORMATER, not TwbIntegerDef.FromEditValue: the integer-def
+    // overload routes through FromInt -> aElement.RequestStorageChange, which would
+    // resize this variable-size payload leaf down to a single slot's 4 bytes and
+    // destroy the rest of the reflection stream. The formater only parses the string
+    // (EditorID [SIG:formid] / raw hex / None) and returns the file-local FormID
+    // cardinal (including the load-order -> file-master step), with no storage change.
+    lFormater := lFormID.Formater[aElement];
+    if not Assigned(lFormater) then
+      Exit;
+    lLength := NativeUInt(aEndPtr) - NativeUInt(aBasePtr);
+
+    SetLength(lValues, Length(lSlots));
+    SetLength(lNewFormIDs, Length(lSlots));
+    SetLength(lChanged, Length(lSlots));
+
+    // Phase 1 - validate + parse EVERY slot before writing ANY byte, so one bad line
+    // aborts the whole edit and never leaves the payload partially applied.
+    for i := 0 to High(lSlots) do begin
+      if NativeUInt(lSlots[i].Offset) + SizeOf(Cardinal) > lLength then
+        Exit; // slot outside the live leaf; fail closed
+      lEquals := Pos('=', lLines[i]);
+      // Field name plus stable decoded order prevents an edit from being silently
+      // applied to a different repeated field in the same reflection payload.
+      if (lEquals < 1) or not SameText(Copy(lLines[i], 1, Pred(lEquals)), lSlots[i].FieldName) then
+        Exit;
+      lValues[i] := Copy(lLines[i], Succ(lEquals), MaxInt);
+      lChanged[i] := lValues[i] <> lFormID.ToEditValue(
+        PByte(aBasePtr) + lSlots[i].Offset,
+        PByte(aBasePtr) + lSlots[i].Offset + SizeOf(Cardinal), aElement);
+      if not lChanged[i] then
+        Continue;
+      // Parse/convert through the formater; reject unparseable input fail-closed.
+      try
+        lNewFormIDs[i] := Cardinal(lFormater.FromEditValue(lValues[i], aElement));
+      except
+        Exit;
+      end;
+    end;
+
+    // Phase 2 - write only changed slots, four bytes in place, NO resize. Never route
+    // through TwbIntegerDef.FromEditValue/FromInt here (it RequestStorageChanges the leaf).
+    for i := 0 to High(lSlots) do
+      if lChanged[i] then
+        PCardinal(PByte(aBasePtr) + lSlots[i].Offset)^ := lNewFormIDs[i];
+  finally
+    lLines.Free;
+  end;
+end;
+
+function TwbReflectionPayloadDef.GetIsEditable(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): Boolean;
+var
+  lSlots: TwbReflectionFormIDSlots;
+  lReason: string;
+begin
+  // Keep existing internal-edit policy first.
+  Result := inherited GetIsEditable(aBasePtr, aEndPtr, aElement);
+  if not Result then
+    Exit;
+  // A copy in progress is an internal byte-write, not a GUI text edit. During
+  // records.copy_into the TARGET payload leaf is still SetToDefault(0) here, so a
+  // Decode fail-closed gate would report "not editable", which flows through
+  // TwbElement.CanAssignInternal and the OBJT struct's per-member CanAssign
+  // aggregation and SKIPS the whole OBJT copy - dropping the reflection payload and
+  // the Step 2B FormID rebase. Mirror the wbCopyIsRunning escape already used for the
+  // conditional-FormID formater (wbImplementation.pas ~18895): defer to the inherited
+  // byte-editable answer during copy and let Assign own it. The GUI decode gate below
+  // re-applies the instant the copy finishes.
+  if wbCopyIsRunning > 0 then
+    Exit;
+  // Outside copy: never offer a text editor without a complete current decode proving
+  // that every writable offset belongs to a slot.
+  Result := (Decode(aBasePtr, aEndPtr, aElement, lSlots, lReason) = rdsComplete);
+end;
+
+function TwbReflectionPayloadDef.GetEditType(aBasePtr, aEndPtr: Pointer;
+  const aElement: IwbElement): TwbEditType;
+begin
+  // Stage B deliberately remains one leaf text editor; a combo would require the
+  // separate element-core model reserved for the later Stage C work.
+  Result := etDefault;
+end;
+
 function TwbReflectionPayloadDef.GetSize(aBasePtr, aEndPtr: Pointer;
   const aElement: IwbElement): Integer;
 var
@@ -19699,16 +19951,24 @@ var
   lLen: NativeUInt;
   lFormID: TwbFormID;
 begin
-  // The inherited byte-array Assign copies the reflection payload verbatim, which keeps
-  // every embedded FormID in the SOURCE file's master-index encoding -> corrupt references
-  // on cross-file copy (records.copy_into adds masters before the copy, so the file-wide
-  // MastersUpdated pass never sees the new record; the copy runs through this Assign).
-  // Fix: copy the bytes, then translate each located reflection FormID slot through the same
-  // source-file -> load-order -> target-file lifecycle wbFormID (TwbFormIDDefFormater.Assign)
-  // uses. Decode the STABLE source leaf (never the just-assigned target) to locate slots, so
-  // the whole-stream walker runs on a settled buffer. Unknown/malformed source grammar (which
-  // the copy gate already blocks) is left verbatim rather than mutated.
-  Result := inherited Assign(aTarget, aIndex, aSource, aOnlySK);
+  // Copy the payload bytes verbatim, then translate each located reflection FormID slot through
+  // the same source-file -> load-order -> target-file lifecycle wbFormID (TwbFormIDDefFormater)
+  // uses. Decode the STABLE source leaf (never the just-assigned target) to locate slots, so the
+  // whole-stream walker runs on a settled buffer. Unknown/malformed source grammar (which the
+  // copy gate already blocks) is left verbatim rather than mutated.
+  //
+  // IMPORTANT - do NOT call `inherited Assign` here. TwbDef.Assign copies a value via a
+  // SetEditValue(EditValue) round-trip. Stage A/B override ToEditValue/FromEditValue to the
+  // SEMANTIC slot representation (`FieldName=<formid>` lines), so during copy that round-trip
+  // emits slot text and the TARGET FromEditValue - which Decode-gates on the still-empty target
+  // leaf - writes ZERO bytes, dropping the entire reflection payload. NativeValue is the
+  // byte-faithful path (TwbByteArrayDef To/FromNativeValue: raw window read + RequestStorageChange
+  // + Move); it resizes the target and copies the exact bytes, bypassing the edit surface, so it
+  // is immune to the Stage B display/edit overrides. The Step 2B slot rebase below then runs on
+  // the now byte-identical target.
+  Result := nil;
+  if Assigned(aSource) and Assigned(aTarget) then
+    aTarget.NativeValue := aSource.NativeValue;
 
   if not Assigned(aSource) or not Assigned(aTarget) then
     Exit;
