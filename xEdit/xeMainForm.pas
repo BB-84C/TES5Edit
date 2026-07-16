@@ -5709,7 +5709,7 @@ begin
         Stream := fcWhatsNew.CreateReadStream;
         try
           reMain.Lines.LoadFromStream(Stream);
-          // BB-84C automation fork: append the r1..r7 automation changelog after
+          // BB-84C automation fork: append the r1..r8 automation changelog after
           // the upstream What's New RTF so this build's audience can see what is
           // actually different from upstream 4.1.5p without leaving the binary.
           // SelStart/SelLength/SelAttributes are used so the appended block can
@@ -5718,12 +5718,17 @@ begin
             reMain.SelStart := reMain.GetTextLen;
             reMain.SelLength := 0;
             reMain.SelAttributes.Style := [fsBold];
-            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r7' + CRLF + CRLF;
+            reMain.SelText := CRLF + CRLF + 'BB-84C/TES5Edit Automation 4.1.6 r1..r8' + CRLF + CRLF;
             reMain.SelAttributes.Style := [];
             reMain.SelText :=
               'This binary is the automation-focused fork at github.com/BB-84C/TES5Edit. ' +
               'The summary below covers everything new since upstream xEdit 4.1.5p.' + CRLF + CRLF +
-              'r7 (this release):' + CRLF +
+              'r8 (this release):' + CRLF +
+              '  - Starfield reflection "kind=9" embedded FormID slots are now surfaced in the GUI. Inside a decoded reflection payload (WEAP/ARMO Base Form Components, PNDT planet data, weather/atmosphere forms, ...) each embedded form-reference now shows as "ClassName.FieldName = EditorID [SIG:FormID]" instead of raw hex, and is editable in place: typing a new FormID rewrites just that 4-byte slot in the owning file''s master-index encoding, byte-exact, without disturbing the rest of the reflection stream. Malformed input is rejected fail-closed. A small extensible whitelist annotates known target record types (pLightForm->LIGH, pImageSpace->IMGS, pSpell->SPEL, pImpactDataSet->IPDS, pSunPresetOverride->SUNP, ...); unknown fields degrade to an unfiltered FormID.' + CRLF +
+              '  - This is a display/edit convenience layered on the reflection value-def; it does not change the copy/remap engine. Cross-plugin copy of reflection-bearing records stays byte-exact and rebases embedded FormIDs correctly.' + CRLF +
+              '  - Reflection copy acceptance clarified (internal): the Starfield reflection copy-gate is decode-aware - a fully-decodable reflection (even one carrying form-references) copies and remaps under the RedPill switches; only an undecodable/malformed reflection stays blocked. Under the default (non-RedPill) build any reflection copy is still blocked, matching upstream.' + CRLF +
+              '  - Internal version bumped from 4.1.6r7 to 4.1.6r8; update check follows v4.1.6-automation.8 tag.' + CRLF + CRLF +
+              'r7:' + CRLF +
               '  - records.apply_filter offset/nextOffset pagination: caller pages beyond the 100-record per-page cap by re-issuing with offset=nextOffset until truncated=false; limit>100 is now rejected as invalid_request instead of silently clamping (fixes issue #4).' + CRLF +
               '  - Starfield unlock on files.create: `small` alias for `esl` (light) header slot, `medium`, and `localized` all supported at creation time. Conflicting `small` + `esl` in the same request is rejected as invalid_request.' + CRLF +
               '  - Core (shared with upstream) TwbFile.CreateNew reordered: the auto-add of Starfield.esm as master now runs BEFORE the aIsLight/aIsMedium header flip, so wbNewFile with aIsLight or aIsMedium no longer throws "Only full modules can add masters in SF1Edit". The Full-module flow is unchanged (identical net state).' + CRLF +
