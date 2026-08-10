@@ -493,6 +493,39 @@ begin
   );
 end;
 
+function xeAutomationElementHasSortableContainer(const AElement: IwbElement): Boolean;
+var
+  lContainer: IwbContainer;
+  lSortableContainer: IwbSortableContainer;
+begin
+  Result := False;
+  if not Assigned(AElement) then
+    Exit;
+
+  // xeAutomation reports the native lazy-sort hazard without exposing or
+  // changing TwbArray's private sort-invalid state. A captured element interface
+  // remains stable, but any later index lookup may resolve to another child.
+  lContainer := AElement.Container;
+  while Assigned(lContainer) do begin
+    if Supports(lContainer, IwbSortableContainer, lSortableContainer) and
+       lSortableContainer.Sorted then
+      Exit(True);
+    lContainer := lContainer.Container;
+  end;
+end;
+
+procedure xeAutomationElementsAppendSortableContainerNotice(
+  const AResult: TJsonObject; const ASortInvalidated: Boolean);
+begin
+  // Keep non-sortable responses unchanged; capability-aware clients can treat
+  // the field's presence as the advisory signal without a new failure path.
+  if not ASortInvalidated then
+    Exit;
+  AResult.B['sortInvalidated'] := True;
+  AResult.S['notice'] :=
+    'container is sorted; index-based locators may have moved after this write';
+end;
+
 function xeAutomationElementsSetValue(const AArgs: TJsonObject): TJsonObject;
 var
   lLocator: TxeAutomationLocator;
@@ -502,6 +535,7 @@ var
   lBeforeValue: string;
   lValue: string;
   lChanged: Boolean;
+  lSortableContainer: Boolean;
   lDeniedReason: string;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
@@ -515,6 +549,7 @@ begin
   lValue := xeAutomationRequireRawStringArg(AArgs, 'value');
 
   lBeforeValue := lElement.EditValue;
+  lSortableContainer := xeAutomationElementHasSortableContainer(lElement);
   if lBeforeValue <> lValue then begin
     // This deliberately mutates only the loaded daemon session. Save/commit flows
     // arrive later, so callers can stage edits and inspect dirty state separately.
@@ -531,6 +566,8 @@ begin
     xeAutomationElementLocatorPath(lElement)
   );
   Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
+  xeAutomationElementsAppendSortableContainerNotice(
+    Result, lChanged and lSortableContainer);
 end;
 
 function xeAutomationElementsSetToDefault(const AArgs: TJsonObject): TJsonObject;
@@ -742,6 +779,7 @@ var
   lKind: string;
   lParsedValue: Variant;
   lBefore: TJsonObject;
+  lSortableContainer: Boolean;
   lDeniedReason: string;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
@@ -767,6 +805,7 @@ begin
   lParsedValue := xeAutomationElementsSetNativeValueParseValue(AArgs, lKind);
 
   lBefore := xeAutomationElementsSetNativeValueBuildBeforeAfter(lElement);
+  lSortableContainer := xeAutomationElementHasSortableContainer(lElement);
   try
     try
       // NativeValue writes are schema-sensitive; wrap native conversion failures
@@ -791,6 +830,7 @@ begin
     Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
     Result.O['before'].Assign(lBefore);
     Result.O['after'] := xeAutomationElementsSetNativeValueBuildBeforeAfter(lElement);
+    xeAutomationElementsAppendSortableContainerNotice(Result, lSortableContainer);
   finally
     lBefore.Free;
   end;

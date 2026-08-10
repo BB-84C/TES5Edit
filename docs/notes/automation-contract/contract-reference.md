@@ -102,6 +102,34 @@ Response includes `masters.added`/`alreadyPresent`/`skipped` and `placement.sort
 
 No new error codes. Reuse `invalid_request` / `invalid_target` / `read_only_target` / `mutation_not_allowed` / `consent_required` / `file_not_found` / `record_not_found` / `element_not_found`.
 
+## Sortable containers and index stability
+
+Some xEdit containers, including LVLI-style arrays, maintain their children in a
+native sorted order. A successful child write invalidates that order; xEdit
+applies the re-sort lazily on the next read that needs sorted children. Element
+interfaces already captured by a script remain attached to the same elements,
+but `ElementByIndex` and other index-based locators can resolve to different
+children after the write.
+
+Scripts must call `IsSorted` when they need to detect this hazard and capture all
+`ElementByIndex` or `ElementByName` references before the first write. Mutate
+through those captured interfaces. Do not re-resolve the remaining targets by
+index after calling `SetEditValue`, `SetNativeValue`, or another child mutation.
+
+On a successful `elements.set_value` or `elements.set_native_value` write beneath
+a sorted container, the daemon adds these advisory result fields:
+
+```json
+{
+  "sortInvalidated": true,
+  "notice": "container is sorted; index-based locators may have moved after this write"
+}
+```
+
+The notice never blocks or denies the write. The fields are absent when no
+sorted-container invalidation occurred. Clients can discover this additive
+surface through `supports.sortableContainerNotice: true`.
+
 ## `scripts.run` success envelope
 
 Successful `scripts.run` stays synchronous. A success response has `ok: true`, `command: "scripts.run"`, and `result` fields including:
