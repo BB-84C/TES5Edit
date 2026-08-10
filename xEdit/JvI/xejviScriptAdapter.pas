@@ -1663,6 +1663,44 @@ begin
     Value := _File.RecordByFormID[TwbFormID.FromVar(Args.Values[1]), Args.Values[2], True];
 end;
 
+procedure IwbFile_RecordByFormIDStrict(var Value: Variant; Args: TJvInterpreterArgs);
+var
+  _File     : IwbFile;
+  lFormID   : TwbFormID;
+  lMaster   : IwbFile;
+  lOwnerFile: IwbFile;
+  i         : Integer;
+begin
+  Value := Null;
+  if not Supports(IInterface(Args.Values[0]), IwbFile, _File) then
+    Exit;
+
+  try
+    lFormID := TwbFormID.FromVar(Args.Values[1]);
+
+    // Resolve load-order ownership before asking xEdit for the record. The legacy
+    // resolver instead treats a foreign load-order slot as this file's local master
+    // index, which can return an unrelated record rather than reporting no match.
+    if _File.LoadOrderFileID = lFormID.FileID then
+      lOwnerFile := _File
+    else
+      for i := 0 to Pred(_File.MasterCount[True]) do begin
+        lMaster := _File.Masters[i, True];
+        if Assigned(lMaster) and (lMaster.LoadOrderFileID = lFormID.FileID) then begin
+          lOwnerFile := lMaster;
+          Break;
+        end;
+      end;
+
+    if Assigned(lOwnerFile) then
+      Value := lOwnerFile.ContainedRecordByLoadOrderFormID[lFormID, Args.Values[2]];
+  except
+    // Strict lookup is a probe: malformed/out-of-range ownership and records that
+    // cannot be resolved are represented by nil, never by a lookup exception.
+    Value := Null;
+  end;
+end;
+
 procedure IwbFile_RecordByEditorID(var Value: Variant; Args: TJvInterpreterArgs);
 var
   _File: IwbFile;
@@ -2355,6 +2393,7 @@ begin
     AddFunction(cUnit, 'RecordByIndex', IwbFile_RecordByIndex, 2, [varEmpty, varInteger], varEmpty);
     AddFunction(cUnit, 'GroupBySignature', IwbFile_GroupBySignature, 2, [varEmpty, varString], varEmpty);
     AddFunction(cUnit, 'RecordByFormID', IwbFile_RecordByFormID, 3, [varEmpty, varInteger, varBoolean], varEmpty);
+    AddFunction(cUnit, 'RecordByFormIDStrict', IwbFile_RecordByFormIDStrict, 3, [varEmpty, varInteger, varBoolean], varEmpty);
     AddFunction(cUnit, 'RecordByEditorID', IwbFile_RecordByEditorID, 2, [varEmpty, varString], varEmpty);
     AddFunction(cUnit, 'GetMasters', IwbFile_GetMasters, 2, [varEmpty, varEmpty], varEmpty);
     AddFunction(cUnit, 'AddMasters', IwbFile_AddMasters, 2, [varEmpty, varEmpty], varEmpty);

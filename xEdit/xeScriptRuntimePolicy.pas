@@ -53,7 +53,7 @@ const
   // type-family shortcuts so newly exposed JvI surfaces remain deny-by-default.
   // Host callback OnGetValue/OnSetValue rows are intentionally excluded here;
   // the headless host owns those callback-policy boundaries.
-  xeScriptRuntimePolicyEntries: array[0..685] of TxeScriptRuntimePolicyEntry = (
+  xeScriptRuntimePolicyEntries: array[0..686] of TxeScriptRuntimePolicyEntry = (
     (Symbol: 'TwbVector'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'wbVector'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'TwbGridCell'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
@@ -216,6 +216,7 @@ const
     (Symbol: 'RecordByIndex'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'GroupBySignature'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'RecordByFormID'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
+    (Symbol: 'RecordByFormIDStrict'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'RecordByEditorID'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'GetMasters'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'AddMasters'; Action: aaGet; Policy: srpAllowInMemoryMutate; PathArgIndex: -1),
