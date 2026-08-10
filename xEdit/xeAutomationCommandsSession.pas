@@ -23,9 +23,26 @@ uses
   xeAutomationErrors,
   xeAutomationGuiSnapshot,
   xeAutomationMutationPolicy,
+  xeAutomationObjectModel,
   xeAutomationRegistry,
   xeAutomationServeLoop,
   xeMainForm;
+
+function xeAutomationNewPendingFileSummary(const AFileName: string): TJsonObject;
+var
+  lFile: IwbFile;
+begin
+  lFile := xeAutomationTryPluginFile(AFileName);
+  if Assigned(lFile) then
+    Exit(xeAutomationNewFileSummary(lFile));
+
+  // A pending queue entry is persistence state in its own right. If xEdit's
+  // module-name index cannot resolve its FileNameOnDisk key (notably .ghost
+  // names), preserve the non-raising readback with the identity still known.
+  Result := TJsonObject.Create;
+  Result.S['name'] := AFileName;
+  Result.S['fileName'] := AFileName;
+end;
 
 function xeAutomationBuildDirtyState: TJsonObject;
 var
@@ -57,9 +74,9 @@ begin
   for i := Low(lPendingShutdownSnapshot) to High(lPendingShutdownSnapshot) do begin
     lPendingEntry := lPendingShutdownFiles.AddObject;
     lPendingEntry.S['tempFile'] := lPendingShutdownSnapshot[i].TempName;
-    lPendingEntry.O['file'] := xeAutomationNewFileSummary(
-        xeAutomationRequirePluginFile(lPendingShutdownSnapshot[i].FileName)
-      );
+    lPendingEntry.O['file'] := xeAutomationNewPendingFileSummary(
+      lPendingShutdownSnapshot[i].FileName
+    );
   end;
   Result.I['pendingShutdownCount'] := lPendingShutdownFiles.Count;
   // Saving clears Modified before a memory-mapped module can be renamed. Thus a
@@ -132,6 +149,8 @@ var
   lPendingRemaining: TJsonArray;
   lEntry: TJsonObject;
   lDeniedReason: string;
+  lForceSpecified: Boolean;
+  lForce: Boolean;
   i: Integer;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
@@ -139,32 +158,54 @@ begin
     Exit;
   end;
 
+  lForce := xeAutomationReadBooleanArg(AArgs, 'force', lForceSpecified);
+  if not lForceSpecified then
+    lForce := False;
   xePendingShutdownSnapshot(lPendingBefore);
   // Force-closing the loaded file graph destroys the session, so preserve its
   // final dirty-state readback before the shared drain releases memory maps.
   lDirtyState := xeAutomationBuildDirtyState;
-  xeDrainPendingRenames(lDrainResults);
-  xePendingShutdownSnapshot(lPendingAfter);
+  try
+    // Unsaved Modified files are not represented by the pending-rename queue.
+    // Refuse to destroy them unless the caller explicitly accepts that loss.
+    if lDirtyState.B['dirty'] and not lForce then
+      raise xeAutomationStateConflict(
+        'session.flush refuses to discard unsaved changes; call session.save first or pass force:true'
+      );
 
-  Result := TJsonObject.Create;
-  lFlushedFiles := Result.A['flushedFiles'];
-  for i := Low(lDrainResults) to High(lDrainResults) do begin
-    lEntry := lFlushedFiles.AddObject;
-    lEntry.S['file'] := lPendingBefore[i].FileName;
-    lEntry.B['renamed'] := lDrainResults[i].Renamed;
-    if lDrainResults[i].Error <> '' then
-      lEntry.S['error'] := lDrainResults[i].Error;
+    try
+      xeDrainPendingRenames(lDrainResults);
+    finally
+      // From this point the file graph may already be invalid. Arm exit before
+      // JSON construction so any later exception still terminates the daemon.
+      xeAutomationServeLoopRequestExit;
+    end;
+    if Length(lDrainResults) <> Length(lPendingBefore) then
+      raise xeAutomationNewError(
+        xeAutomationErrorInternalError,
+        'session.flush pending queue changed between snapshot and drain'
+      );
+    xePendingShutdownSnapshot(lPendingAfter);
+
+    Result := TJsonObject.Create;
+    lFlushedFiles := Result.A['flushedFiles'];
+    for i := Low(lDrainResults) to High(lDrainResults) do begin
+      lEntry := lFlushedFiles.AddObject;
+      lEntry.S['fileName'] := lDrainResults[i].FileName;
+      lEntry.B['renamed'] := lDrainResults[i].Renamed;
+      if lDrainResults[i].Error <> '' then
+        lEntry.S['error'] := lDrainResults[i].Error;
+    end;
+
+    lPendingRemaining := Result.A['pendingRemaining'];
+    for i := Low(lPendingAfter) to High(lPendingAfter) do
+      lPendingRemaining.Add(lPendingAfter[i].FileName);
+    Result.I['pendingRemainingCount'] := lPendingRemaining.Count;
+    Result.O['dirtyState'] := lDirtyState;
+    lDirtyState := nil;
+  finally
+    lDirtyState.Free;
   end;
-
-  lPendingRemaining := Result.A['pendingRemaining'];
-  for i := Low(lPendingAfter) to High(lPendingAfter) do
-    lPendingRemaining.Add(lPendingAfter[i].FileName);
-  Result.I['pendingRemainingCount'] := lPendingRemaining.Count;
-  Result.O['dirtyState'] := lDirtyState;
-
-  // A flush always ends this now-invalid session, including the empty-queue
-  // case. The serve loop honors the request only after the response is flushed.
-  xeAutomationServeLoopRequestExit;
 end;
 
 procedure xeAutomationRegisterSessionCommands;

@@ -89,6 +89,7 @@ type
   end;
 
 function xeAutomationTryPluginFileFromModule(const AModule: PwbModuleInfo): IwbFile;
+function xeAutomationTryPluginFile(const AName: string): IwbFile;
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
 function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
 function xeAutomationArgPresent(const AArgs: TJsonObject; const AKey: string): Boolean;
@@ -201,6 +202,36 @@ begin
     Result := nil;
 end;
 
+function xeAutomationTryPluginFile(const AName: string): IwbFile;
+var
+  lModule: PwbModuleInfo;
+  lModules: TwbModuleInfos;
+  lFile: IwbFile;
+  i: Integer;
+begin
+  Result := nil;
+  if AName = '' then
+    Exit;
+
+  lModule := wbModuleByName(AName);
+  if Assigned(lModule) and lModule^.IsValid then begin
+    Result := xeAutomationTryPluginFileFromModule(lModule);
+    if Assigned(Result) then
+      Exit;
+  end;
+
+  // Pending-save queue keys use FileNameOnDisk, which can retain a .ghost
+  // suffix even when the module name index stores the logical plugin name.
+  // Scan loaded plugin objects as a non-raising fallback for pure readbacks.
+  lModules := wbModulesByLoadOrder;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if Assigned(lFile) and
+       (SameText(AName, lFile.FileName) or SameText(AName, lFile.FileNameOnDisk)) then
+      Exit(lFile);
+  end;
+end;
+
 function xeAutomationNewFileSummary(const AFile: IwbFile): TJsonObject;
 var
   lMasters: TJsonArray;
@@ -256,13 +287,8 @@ begin
 end;
 
 function xeAutomationRequirePluginFile(const AName: string): IwbFile;
-var
-  lModule: PwbModuleInfo;
 begin
-  lModule := wbModuleByName(AName);
-  Result := nil;
-  if lModule^.IsValid then
-    Result := xeAutomationTryPluginFileFromModule(lModule);
+  Result := xeAutomationTryPluginFile(AName);
 
   if not Assigned(Result) then
     raise xeAutomationNewError(

@@ -11,6 +11,7 @@ unit xeAutomationServeLoop;
 interface
 
 function xeAutomationServeLoopPipeName: string;
+function xeAutomationServeLoopExitRequested: Boolean;
 procedure xeAutomationServeLoopStart;
 procedure xeAutomationServeLoopStop;
 procedure xeAutomationServeLoopPoll;
@@ -54,6 +55,11 @@ var
 function xeAutomationServeLoopPipeName: string;
 begin
   Result := xeAutomationServePipeNameValue;
+end;
+
+function xeAutomationServeLoopExitRequested: Boolean;
+begin
+  Result := xeAutomationServeExitRequested;
 end;
 
 procedure xeAutomationServeLoopRequestExit;
@@ -265,10 +271,15 @@ begin
     lResponseText := xeAutomationExecuteRequestText(TEncoding.UTF8.GetString(lRequestBytes));
     xeAutomationServeLoopWritePipeBytes(TEncoding.UTF8.GetBytes(lResponseText));
     FlushFileBuffers(xeAutomationServePipeHandle);
-    if xeAutomationServeExitRequested and Assigned(Application.MainForm) then begin
+    if xeAutomationServeExitRequested then begin
       // session.flush promises that its complete response reaches the pipe before
       // normal VCL shutdown releases Application.Run to the trailing DoRename.
-      PostMessage(Application.MainForm.Handle, WM_CLOSE, 0, 0);
+      // If no main form can receive WM_CLOSE, Terminate still unwinds Run cleanly.
+      if Assigned(Application.MainForm) then begin
+        if not PostMessage(Application.MainForm.Handle, WM_CLOSE, 0, 0) then
+          Application.Terminate;
+      end else
+        Application.Terminate;
     end;
   finally
     xeAutomationServeLoopResetPipe;

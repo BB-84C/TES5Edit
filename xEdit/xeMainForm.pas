@@ -2145,6 +2145,19 @@ begin
   // dangling master references in the remaining session.
   wbFileForceClosed;
 
+  // Preserve the legacy shutdown gate after force-close. DoRenameModule also
+  // refuses under wbDontSave, but the shared drain must not rely on that
+  // lower-level guard for its no-persistence contract.
+  if wbDontSave then begin
+    for i := Low(lPending) to High(lPending) do begin
+      AResults[i].FileName := lPending[i].FileName;
+      AResults[i].TempName := lPending[i].TempName;
+      AResults[i].Renamed := False;
+      AResults[i].Error := 'Saving is disabled';
+    end;
+    Exit;
+  end;
+
   if Length(lPending) > 0 then begin
     wbCurrentAction := 'Renaming previously saved files';
     wbProgress(wbCurrentAction);
@@ -2169,8 +2182,9 @@ begin
 
     if AResults[i].Renamed then begin
       Inc(Result);
-      // Successful pairs must not be retried by the process-exit DoRename pass;
-      // failures intentionally remain queued for that final best-effort retry.
+      // Successful pairs must not be retried by the process-exit DoRename pass.
+      // Failures remain queued so a session.flush failure gets that final retry;
+      // if this is already DoRename, they persist only until process teardown.
       if Assigned(FilesToRename) then
         for j := Pred(FilesToRename.Count) downto 0 do
           if SameText(FilesToRename.Names[j], lPending[i].FileName) and
@@ -2212,6 +2226,9 @@ begin
   // GUI shutdown and session.flush deliberately share the same queue drain so
   // backup, rename, result, and retry semantics cannot diverge over time.
   xeDrainPendingRenames(lResults);
+
+  // The shared helper now removes only successful pairs. Failed process-exit
+  // pairs intentionally remain queued until teardown instead of being discarded.
 
   if wbDontSave then
     Exit;
@@ -7005,8 +7022,10 @@ procedure TfrmMain.FormClose(Sender: TObject; var Action: TCloseAction);
 
 var
   i: Integer;
+  lAutomationFlushExit: Boolean;
 
 begin
+  lAutomationFlushExit := xeAutomationServeLoopExitRequested;
   Action := caFree;
   FreeAndNil(AutomationServeTimer);
   xeAutomationServeLoopStop;
@@ -7043,9 +7062,14 @@ begin
       TerminateThread(CheckNexusModsReleaseThread.Handle, 0);
   end;
 
-  if SaveChanged >= srAbort then begin
-    Action := caNone;
-    Exit;
+  // session.flush already captured dirty state, applied the force policy, and
+  // force-closed every file. Skipping SaveChanged avoids an invisible
+  // localization-selection modal; ordinary user closes keep the GUI prompt.
+  if not lAutomationFlushExit then begin
+    if SaveChanged >= srAbort then begin
+      Action := caNone;
+      Exit;
+    end;
   end;
 
   if Assigned(Settings) then begin
