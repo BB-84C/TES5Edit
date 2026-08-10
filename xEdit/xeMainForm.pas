@@ -1254,6 +1254,13 @@ type
     constructor Create(const aMainRecord: IwbMainRecord);
   end;
 
+  TxePendingShutdownFile = record
+    FileName: string;
+    TempName: string;
+  end;
+
+  TxePendingShutdownFiles = array of TxePendingShutdownFile;
+
 var
   frmMain                     : TfrmMain;
   FilesToRename               : TStringList;
@@ -1261,6 +1268,7 @@ var
 procedure DoRename;
 function xeSavePluginFile(const AFile: IwbFile; aSilent: Boolean; out AErrorMessage: string): Boolean;
 function xeSavePluginFilePendingShutdown(const AFile: IwbFile): Boolean;
+function xePendingShutdownSnapshot(out AFiles: TxePendingShutdownFiles): Integer;
 
 function LockProcessMessages: Integer;
 function UnLockProcessMessages: Integer;
@@ -2093,6 +2101,24 @@ begin
       Result := True;
       Exit;
     end;
+end;
+
+function xePendingShutdownSnapshot(out AFiles: TxePendingShutdownFiles): Integer;
+var
+  i: Integer;
+begin
+  SetLength(AFiles, 0);
+  if not Assigned(FilesToRename) then
+    Exit(0);
+
+  // FilesToRename remains private to this unit; automation receives an immutable
+  // point-in-time view so response construction cannot mutate the shutdown queue.
+  SetLength(AFiles, FilesToRename.Count);
+  for i := 0 to Pred(FilesToRename.Count) do begin
+    AFiles[i].FileName := FilesToRename.Names[i];
+    AFiles[i].TempName := FilesToRename.ValueFromIndex[i];
+  end;
+  Result := Length(AFiles);
 end;
 
 var

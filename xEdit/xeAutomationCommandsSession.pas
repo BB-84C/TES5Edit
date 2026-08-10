@@ -30,11 +30,15 @@ function xeAutomationBuildDirtyState: TJsonObject;
 var
   lModules: TwbModuleInfos;
   lDirtyFiles: TJsonArray;
+  lPendingShutdownFiles: TJsonArray;
+  lPendingShutdownSnapshot: TxePendingShutdownFiles;
+  lPendingEntry: TJsonObject;
   lFile: IwbFile;
   i: Integer;
 begin
   Result := TJsonObject.Create;
   lDirtyFiles := Result.A['dirtyFiles'];
+  lPendingShutdownFiles := Result.A['pendingShutdownFiles'];
 
   // Dirty state belongs to the loaded daemon session, not to any single request:
   // each call asks about the same in-memory plugin set until the daemon exits.
@@ -47,6 +51,18 @@ begin
 
   Result.I['unsavedChangeCount'] := lDirtyFiles.Count;
   Result.B['dirty'] := lDirtyFiles.Count > 0;
+
+  xePendingShutdownSnapshot(lPendingShutdownSnapshot);
+  for i := Low(lPendingShutdownSnapshot) to High(lPendingShutdownSnapshot) do begin
+    lPendingEntry := lPendingShutdownFiles.AddObject;
+    lPendingEntry.S['tempFile'] := lPendingShutdownSnapshot[i].TempName;
+    lPendingEntry.O['file'] := xeAutomationNewFileSummary(
+        xeAutomationRequirePluginFile(lPendingShutdownSnapshot[i].FileName)
+      );
+  end;
+  Result.I['pendingShutdownCount'] := lPendingShutdownFiles.Count;
+  // Saving clears Modified before a memory-mapped module can be renamed. Thus a
+  // pending entry intentionally coexists with dirty=false until shutdown/flush.
 end;
 
 function xeAutomationSessionGetDirtyState(const AArgs: TJsonObject): TJsonObject;

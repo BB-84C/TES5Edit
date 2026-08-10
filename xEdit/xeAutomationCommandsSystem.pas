@@ -167,6 +167,7 @@ begin
 
   Result.O['supports'].B['oneShot'] := True;
   Result.O['supports'].B['daemon'] := True;
+  Result.O['supports'].B['pendingSaveReadback'] := True;
   // Supports fields are explicit protocol metadata rather than inferred from
   // command names so clients can choose safe patch-building flows up front.
   Result.O['supports'].O['filesCreate'].A['extensions'].Add('.esp');
