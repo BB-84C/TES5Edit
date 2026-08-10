@@ -545,6 +545,17 @@ begin
   Value := IntToHex64(Args.Values[0], Args.Values[1]);
 end;
 
+procedure JvInterpreter_IntToStr64(var Value: Variant; Args: TJvInterpreterArgs);
+begin
+  Value := IntToStr(Int64(Args.Values[0]));
+end;
+
+procedure JvInterpreter_IntToHex(var Value: Variant; Args: TJvInterpreterArgs);
+begin
+  // Keep the script-visible two-argument formatter aligned with IntToHex64.
+  Value := IntToHex64(Integer(Args.Values[0]), Args.Values[1]);
+end;
+
 procedure JvInterpreter_StrToInt64(var Value: Variant; Args: TJvInterpreterArgs);
 begin
   Value := StrToInt64(Args.Values[0]);
@@ -2006,6 +2017,8 @@ begin
     AddFunction('SysUtils', 'SameText', JvInterpreter_SameText, 2, [varString, varString], varEmpty);
     AddFunction('SysUtils', 'SameValue', JvInterpreter_SameValue, 2, [varEmpty, varEmpty], varEmpty);
     AddFunction('SysUtils', 'StringReplace', JvInterpreter_StringReplace, 4, [varString, varString, varString, varEmpty], varEmpty);
+    AddFunction('SysUtils', 'IntToStr64', JvInterpreter_IntToStr64, 1, [varEmpty], varEmpty);
+    AddFunction('SysUtils', 'IntToHex', JvInterpreter_IntToHex, 2, [varEmpty, varEmpty], varEmpty);
     AddFunction('SysUtils', 'IntToHex64', JvInterpreter_IntToHex64, 2, [varEmpty, varEmpty], varEmpty);
     AddFunction('SysUtils', 'StrToInt64', JvInterpreter_StrToInt64, 1, [varEmpty], varEmpty);
     AddFunction('SysUtils', 'StrToInt64Def', JvInterpreter_StrToInt64Def, 2, [varEmpty, varEmpty], varEmpty);

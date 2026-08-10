@@ -53,7 +53,7 @@ const
   // type-family shortcuts so newly exposed JvI surfaces remain deny-by-default.
   // Host callback OnGetValue/OnSetValue rows are intentionally excluded here;
   // the headless host owns those callback-policy boundaries.
-  xeScriptRuntimePolicyEntries: array[0..686] of TxeScriptRuntimePolicyEntry = (
+  xeScriptRuntimePolicyEntries: array[0..688] of TxeScriptRuntimePolicyEntry = (
     (Symbol: 'TwbVector'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'wbVector'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'TwbGridCell'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
@@ -450,6 +450,8 @@ const
     (Symbol: 'SameText'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'SameValue'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'StringReplace'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
+    (Symbol: 'IntToStr64'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
+    (Symbol: 'IntToHex'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'IntToHex64'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'StrToInt64'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
     (Symbol: 'StrToInt64Def'; Action: aaGet; Policy: srpAllowPureRead; PathArgIndex: -1),
