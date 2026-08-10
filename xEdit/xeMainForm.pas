@@ -1261,6 +1261,15 @@ type
 
   TxePendingShutdownFiles = array of TxePendingShutdownFile;
 
+  TxePendingRenameResult = record
+    FileName: string;
+    TempName: string;
+    Renamed: Boolean;
+    Error: string;
+  end;
+
+  TxePendingRenameResults = array of TxePendingRenameResult;
+
 var
   frmMain                     : TfrmMain;
   FilesToRename               : TStringList;
@@ -1269,6 +1278,7 @@ procedure DoRename;
 function xeSavePluginFile(const AFile: IwbFile; aSilent: Boolean; out AErrorMessage: string): Boolean;
 function xeSavePluginFilePendingShutdown(const AFile: IwbFile): Boolean;
 function xePendingShutdownSnapshot(out AFiles: TxePendingShutdownFiles): Integer;
+function xeDrainPendingRenames(out AResults: TxePendingRenameResults): Integer;
 
 function LockProcessMessages: Integer;
 function UnLockProcessMessages: Integer;
@@ -2121,6 +2131,57 @@ begin
   Result := Length(AFiles);
 end;
 
+function xeDrainPendingRenames(out AResults: TxePendingRenameResults): Integer;
+var
+  lPending: TxePendingShutdownFiles;
+  i, j: Integer;
+begin
+  xePendingShutdownSnapshot(lPending);
+  SetLength(AResults, Length(lPending));
+  Result := 0;
+
+  // Loaded modules hold memory maps over their final filenames. Release the
+  // complete file graph once before any rename; per-file closing would leave
+  // dangling master references in the remaining session.
+  wbFileForceClosed;
+
+  if Length(lPending) > 0 then begin
+    wbCurrentAction := 'Renaming previously saved files';
+    wbProgress(wbCurrentAction);
+  end;
+
+  for i := Low(lPending) to High(lPending) do begin
+    AResults[i].FileName := lPending[i].FileName;
+    AResults[i].TempName := lPending[i].TempName;
+    try
+      AResults[i].Renamed := DoRenameModule(lPending[i].TempName, lPending[i].FileName, True);
+      if not AResults[i].Renamed then
+        AResults[i].Error := Format('Could not rename "%s" to "%s"', [
+          lPending[i].TempName,
+          lPending[i].FileName
+        ]);
+    except
+      on E: Exception do begin
+        AResults[i].Renamed := False;
+        AResults[i].Error := E.Message;
+      end;
+    end;
+
+    if AResults[i].Renamed then begin
+      Inc(Result);
+      // Successful pairs must not be retried by the process-exit DoRename pass;
+      // failures intentionally remain queued for that final best-effort retry.
+      if Assigned(FilesToRename) then
+        for j := Pred(FilesToRename.Count) downto 0 do
+          if SameText(FilesToRename.Names[j], lPending[i].FileName) and
+             SameText(FilesToRename.ValueFromIndex[j], lPending[i].TempName) then begin
+            FilesToRename.Delete(j);
+            Break;
+          end;
+    end;
+  end;
+end;
+
 var
   _SaveProgress: Boolean;
 
@@ -2133,6 +2194,7 @@ end;
 
 procedure DoRename;
 var
+  lResults : TxePendingRenameResults;
   i        : Integer;
   AnyError : Boolean;
 begin
@@ -2146,25 +2208,17 @@ begin
     frmMain.mmoMessages.Clear;
   wbProgress(wbCurrentAction);
 
-  wbFileForceClosed;
+  _SaveProgress := False;
+  // GUI shutdown and session.flush deliberately share the same queue drain so
+  // backup, rename, result, and retry semantics cannot diverge over time.
+  xeDrainPendingRenames(lResults);
 
   if wbDontSave then
     Exit;
 
-  if not Assigned(FilesToRename) then
-    Exit;
-
-  if not xeDontBackup and not DirectoryExists(wbBackupPath) then
-    if not ForceDirectories(wbBackupPath) then
-      wbBackupPath := wbDataPath;
-
-  wbCurrentAction := 'Renaming previously saved files';
-  wbProgress(wbCurrentAction);
-
-  _SaveProgress := False;
   AnyError := False;
-  for i := 0 to Pred(FilesToRename.Count) do
-    if not DoRenameModule(FilesToRename.ValueFromIndex[i], FilesToRename.Names[i], False) then
+  for i := Low(lResults) to High(lResults) do
+    if not lResults[i].Renamed then
       AnyError := True;
 
   if AnyError then begin

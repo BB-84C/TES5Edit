@@ -14,6 +14,7 @@ function xeAutomationServeLoopPipeName: string;
 procedure xeAutomationServeLoopStart;
 procedure xeAutomationServeLoopStop;
 procedure xeAutomationServeLoopPoll;
+procedure xeAutomationServeLoopRequestExit;
 
 implementation
 
@@ -26,7 +27,9 @@ uses
   xeAutomationCommandsSession,
   xeAutomationCommandsSessionNavigation,
   Windows,
+  Messages,
   Classes,
+  Forms,
   SysUtils,
   xeAutomationCommandsElements,
   xeAutomationCommandsFiles,
@@ -44,12 +47,20 @@ const
 var
   xeAutomationServeActive: Boolean;
   xeAutomationServeCommandsRegistered: Boolean;
+  xeAutomationServeExitRequested: Boolean;
   xeAutomationServePipeNameValue: string;
   xeAutomationServePipeHandle: THandle = INVALID_HANDLE_VALUE;
 
 function xeAutomationServeLoopPipeName: string;
 begin
   Result := xeAutomationServePipeNameValue;
+end;
+
+procedure xeAutomationServeLoopRequestExit;
+begin
+  // The current request is allowed to finish; subsequent timer polls are barred
+  // until its response bytes are flushed and WM_CLOSE is posted below.
+  xeAutomationServeExitRequested := True;
 end;
 
 procedure xeAutomationServeLoopResetPipe;
@@ -220,6 +231,7 @@ begin
     xeAutomationRegisterJobsCommands;
     xeAutomationServeCommandsRegistered := True;
   end;
+  xeAutomationServeExitRequested := False;
   xeAutomationServeActive := True;
   xeAutomationServePipeNameValue := xeAutomationPipeNameForPid(GetCurrentProcessId);
   xeAutomationServeLoopEnsurePipe;
@@ -237,7 +249,7 @@ var
   lRequestBytes: TBytes;
   lResponseText: string;
 begin
-  if not xeAutomationServeActive then
+  if not xeAutomationServeActive or xeAutomationServeExitRequested then
     Exit;
 
   xeAutomationServeLoopEnsurePipe;
@@ -253,6 +265,11 @@ begin
     lResponseText := xeAutomationExecuteRequestText(TEncoding.UTF8.GetString(lRequestBytes));
     xeAutomationServeLoopWritePipeBytes(TEncoding.UTF8.GetBytes(lResponseText));
     FlushFileBuffers(xeAutomationServePipeHandle);
+    if xeAutomationServeExitRequested and Assigned(Application.MainForm) then begin
+      // session.flush promises that its complete response reaches the pipe before
+      // normal VCL shutdown releases Application.Run to the trailing DoRename.
+      PostMessage(Application.MainForm.Handle, WM_CLOSE, 0, 0);
+    end;
   finally
     xeAutomationServeLoopResetPipe;
   end;
@@ -260,6 +277,7 @@ end;
 
 initialization
   xeAutomationServePipeHandle := INVALID_HANDLE_VALUE;
+  xeAutomationServeExitRequested := False;
 
 finalization
   xeAutomationServeLoopStop;

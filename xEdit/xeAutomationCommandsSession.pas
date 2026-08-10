@@ -24,6 +24,7 @@ uses
   xeAutomationGuiSnapshot,
   xeAutomationMutationPolicy,
   xeAutomationRegistry,
+  xeAutomationServeLoop,
   xeMainForm;
 
 function xeAutomationBuildDirtyState: TJsonObject;
@@ -121,11 +122,57 @@ begin
   Result.O['dirtyState'] := xeAutomationBuildDirtyState;
 end;
 
+function xeAutomationSessionFlush(const AArgs: TJsonObject): TJsonObject;
+var
+  lPendingBefore: TxePendingShutdownFiles;
+  lDrainResults: TxePendingRenameResults;
+  lPendingAfter: TxePendingShutdownFiles;
+  lDirtyState: TJsonObject;
+  lFlushedFiles: TJsonArray;
+  lPendingRemaining: TJsonArray;
+  lEntry: TJsonObject;
+  lDeniedReason: string;
+  i: Integer;
+begin
+  if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
+    Result := xeAutomationErrorsBuildConsentRequired('session.flush', 'session-mutation', lDeniedReason);
+    Exit;
+  end;
+
+  xePendingShutdownSnapshot(lPendingBefore);
+  // Force-closing the loaded file graph destroys the session, so preserve its
+  // final dirty-state readback before the shared drain releases memory maps.
+  lDirtyState := xeAutomationBuildDirtyState;
+  xeDrainPendingRenames(lDrainResults);
+  xePendingShutdownSnapshot(lPendingAfter);
+
+  Result := TJsonObject.Create;
+  lFlushedFiles := Result.A['flushedFiles'];
+  for i := Low(lDrainResults) to High(lDrainResults) do begin
+    lEntry := lFlushedFiles.AddObject;
+    lEntry.S['file'] := lPendingBefore[i].FileName;
+    lEntry.B['renamed'] := lDrainResults[i].Renamed;
+    if lDrainResults[i].Error <> '' then
+      lEntry.S['error'] := lDrainResults[i].Error;
+  end;
+
+  lPendingRemaining := Result.A['pendingRemaining'];
+  for i := Low(lPendingAfter) to High(lPendingAfter) do
+    lPendingRemaining.Add(lPendingAfter[i].FileName);
+  Result.I['pendingRemainingCount'] := lPendingRemaining.Count;
+  Result.O['dirtyState'] := lDirtyState;
+
+  // A flush always ends this now-invalid session, including the empty-queue
+  // case. The serve loop honors the request only after the response is flushed.
+  xeAutomationServeLoopRequestExit;
+end;
+
 procedure xeAutomationRegisterSessionCommands;
 begin
   xeAutomationRegisterCommand('session.get_dirty_state', xeAutomationSessionGetDirtyState);
   xeAutomationRegisterCommand('session.get_gui_snapshot', xeAutomationSessionGetGuiSnapshot);
   xeAutomationRegisterCommand('session.save', xeAutomationSessionSave);
+  xeAutomationRegisterCommand('session.flush', xeAutomationSessionFlush);
 end;
 
 end.
