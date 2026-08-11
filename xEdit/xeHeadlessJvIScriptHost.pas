@@ -93,9 +93,11 @@ type
     FEntryScriptUnderAgentRoot: Boolean;
     FTargets: TxeHeadlessTargetElements;
     FFiles: TwbFiles;
+    FLoadedUnitSources: TArray<string>;
     procedure AddCapturedMessage(const AMessage: string);
     procedure CallScriptFunction(const AName: string; const AParams: array of Variant);
     procedure CacheLoadedFiles;
+    procedure CaptureLoadedUnitSource(const ASource: string);
     procedure FailScript(const ACode, AMessage: string);
     procedure JvInterpreterProgramGetValue(Sender: TObject; Identifier: string; var Value: Variant;
       Args: TJvInterpreterArgs; var Done: Boolean);
@@ -242,6 +244,21 @@ begin
     FMessages.Add(lStored);
     Inc(FMessageBytes, TEncoding.UTF8.GetByteCount(lStored));
   end;
+end;
+
+procedure TxeHeadlessJvIHost.CaptureLoadedUnitSource(const ASource: string);
+var
+  lIndex: Integer;
+  i: Integer;
+begin
+  if ASource = '' then
+    Exit;
+  for i := Low(FLoadedUnitSources) to High(FLoadedUnitSources) do
+    if FLoadedUnitSources[i] = ASource then
+      Exit;
+  lIndex := Length(FLoadedUnitSources);
+  SetLength(FLoadedUnitSources, lIndex + 1);
+  FLoadedUnitSources[lIndex] := ASource;
 end;
 
 function TxeHeadlessJvIHost.BuildDirtyState: TJsonObject;
@@ -433,6 +450,7 @@ procedure TxeHeadlessJvIHost.JvInterpreterProgramGetUnitSource(UnitName: string;
 begin
   if SameText(UnitName, 'xEditAPI') or SameText(UnitName, 'UITypes') or IsUnitCompiledIn(HInstance, UnitName) then begin
     Source := 'unit ' + UnitName + '; end.';
+    CaptureLoadedUnitSource(Source);
     Done := True;
     Exit;
   end;
@@ -441,12 +459,15 @@ begin
   // raw ScriptsPath LoadFromFile path, preventing a daemon script from importing an
   // arbitrary file by shaping UnitName or relying on the process current directory.
   if LoadUnitSourceFrom(FEntryScriptDir, UnitName, Source) then begin
+    CaptureLoadedUnitSource(Source);
     Done := True;
     Exit;
   end;
 
-  if FEntryScriptUnderAgentRoot and LoadUnitSourceFrom(FAgentScriptsDir, UnitName, Source) then
+  if FEntryScriptUnderAgentRoot and LoadUnitSourceFrom(FAgentScriptsDir, UnitName, Source) then begin
+    CaptureLoadedUnitSource(Source);
     Done := True;
+  end;
 end;
 
 procedure TxeHeadlessJvIHost.JvInterpreterProgramStatement(Sender: TObject);
@@ -517,12 +538,13 @@ begin
         // and local-instance calls remain guarded by the authoritative runtime hook.
         FResult.ScriptLastPhase := 'preflight';
         lPreflightHits := xeScriptPolicyPreflightCalls(lSource.Text,
-          ExtractFileName(FOptions.EntryScriptPath), xeHeadlessPolicyAllowsCall);
+          ExtractFileName(FOptions.EntryScriptPath), FLoadedUnitSources,
+          xeHeadlessPolicyAllowsCall);
         if Length(lPreflightHits) > 0 then begin
           FResult.PolicyPreflightLine := lPreflightHits[0].Line;
           FResult.PolicyPreflightColumn := lPreflightHits[0].Column;
           raise xeAutomationNewError(xeHeadlessScriptErrorPolicyPreflight,
-            Format('Access denied to ''%s: policy preflight: symbol is not in the JvI ledger or host-global allowlist''',
+            Format('Access denied to ''%s: policy preflight: symbol is denied or not admitted by JvI policy''',
               [lPreflightHits[0].Symbol]));
         end;
 

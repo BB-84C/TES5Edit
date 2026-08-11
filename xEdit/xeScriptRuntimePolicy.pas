@@ -973,12 +973,21 @@ end;
 function xeScriptPolicyIsAllowedCall(const ACalledSymbol: string;
   const ADeclared: TArray<string>): Boolean;
 var
+  lAllowedLedgerMatch: Boolean;
   i: Integer;
 begin
   Result := False;
+  lAllowedLedgerMatch := False;
   for i := Low(xeScriptRuntimePolicyEntries) to High(xeScriptRuntimePolicyEntries) do
-    if xePolicyEntryMatchesSymbolOnly(string(xeScriptRuntimePolicyEntries[i].Symbol), ACalledSymbol) then
-      Exit(True);
+    if xePolicyEntryMatchesSymbolOnly(string(xeScriptRuntimePolicyEntries[i].Symbol), ACalledSymbol) then begin
+      // Explicit deny rows outrank any same-symbol allow row. Preflight cannot
+      // inspect arguments, but it can and must reject unconditional classifications.
+      if xePolicyIsDeny(xeScriptRuntimePolicyEntries[i].Policy) then
+        Exit(False);
+      lAllowedLedgerMatch := True;
+    end;
+  if lAllowedLedgerMatch then
+    Exit(True);
 
   if xeScriptPolicyStringArrayContains(xeScriptPolicyHostGlobals, ACalledSymbol) or
     xeScriptPolicyDeclaredContains(ADeclared, ACalledSymbol) or

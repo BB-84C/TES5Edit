@@ -26,6 +26,7 @@ type
 
 function xeLintScriptEntrySource(const ASource, ASourceUnit: string): TArray<TxeScriptLintHit>;
 function xeScriptPolicyPreflightCalls(const ASource, ASourceUnit: string;
+  const ADeclarationSources: TArray<string>;
   AIsAllowedCall: TxeScriptPolicyCallPredicate): TArray<TxeScriptLintHit>;
 
 implementation
@@ -414,7 +415,41 @@ begin
   ADeclared[lIndex] := ASymbol;
 end;
 
+procedure xeScriptPolicyCollectDeclarationsFromTokens(const ATokens: TList<TxeScriptLintToken>;
+  var ADeclared: TArray<string>);
+var
+  i: Integer;
+begin
+  for i := 0 to ATokens.Count - 2 do
+    if (SameText(ATokens[i].Text, 'function') or SameText(ATokens[i].Text, 'procedure')) and
+      xeScriptPolicyTokenIsIdentifier(ATokens[i + 1]) then
+      xeScriptPolicyAppendDeclared(ADeclared, ATokens[i + 1].Text);
+end;
+
+procedure xeScriptPolicyCollectDeclarationsFromSource(const ASource: string;
+  var ADeclared: TArray<string>);
+var
+  lTokens: TList<TxeScriptLintToken>;
+  lToken: TxeScriptLintToken;
+  lIndex: Integer;
+  lLine: Integer;
+  lColumn: Integer;
+begin
+  lTokens := TList<TxeScriptLintToken>.Create;
+  try
+    lIndex := 1;
+    lLine := 1;
+    lColumn := 1;
+    while xeReadNextSignificantToken(ASource, lIndex, lLine, lColumn, lToken) do
+      lTokens.Add(lToken);
+    xeScriptPolicyCollectDeclarationsFromTokens(lTokens, ADeclared);
+  finally
+    lTokens.Free;
+  end;
+end;
+
 function xeScriptPolicyPreflightCalls(const ASource, ASourceUnit: string;
+  const ADeclarationSources: TArray<string>;
   AIsAllowedCall: TxeScriptPolicyCallPredicate): TArray<TxeScriptLintHit>;
 var
   lTokens: TList<TxeScriptLintToken>;
@@ -438,11 +473,11 @@ begin
       lTokens.Add(lToken);
 
     // Discover declarations before checking calls so forward references and calls
-    // appearing above a later body are treated like normal script-local routines.
-    for i := 0 to lTokens.Count - 2 do
-      if (SameText(lTokens[i].Text, 'function') or SameText(lTokens[i].Text, 'procedure')) and
-        xeScriptPolicyTokenIsIdentifier(lTokens[i + 1]) then
-        xeScriptPolicyAppendDeclared(lDeclared, lTokens[i + 1].Text);
+    // into helper units loaded during compile remain normal script routines. Calls
+    // inside helper sources are not scanned; the runtime hook remains their guard.
+    xeScriptPolicyCollectDeclarationsFromTokens(lTokens, lDeclared);
+    for i := Low(ADeclarationSources) to High(ADeclarationSources) do
+      xeScriptPolicyCollectDeclarationsFromSource(ADeclarationSources[i], lDeclared);
 
     i := 0;
     while i < lTokens.Count do begin

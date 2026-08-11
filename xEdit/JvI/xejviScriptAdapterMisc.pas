@@ -553,7 +553,7 @@ end;
 procedure JvInterpreter_IntToHex(var Value: Variant; Args: TJvInterpreterArgs);
 begin
   // Keep the script-visible two-argument formatter aligned with IntToHex64.
-  Value := IntToHex64(Integer(Args.Values[0]), Args.Values[1]);
+  Value := IntToHex64(Args.Values[0], Args.Values[1]);
 end;
 
 procedure JvInterpreter_StrToInt64(var Value: Variant; Args: TJvInterpreterArgs);
