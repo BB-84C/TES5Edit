@@ -1357,3 +1357,37 @@ Delivered: reflection "kind=9" embedded FormID slots (the form-references inside
 - Build: dual-platform LiteDebug Win32 (F012213F) + Win64 (CA988C0B), canonical `bds -b`; dproj restored to Win32.
 - BUILD LESSON (newly known, sharper than the prior "bds -b looks hung" note): `bds -b` OPENS AN IDE WINDOW (title `... - xeMainForm` / `ProjectGroup1.groupproj`) WHILE it builds headless. That window is NORMAL and does NOT mean the build failed — judge success ONLY by `xEdit.err` containing `Success` + a fresh `Build\xEdit.exe`, NEVER by the presence/absence of the IDE window title. Do NOT escalate a "stuck" build to clearing RAD Studio state or a reboot theory on the basis of the IDE window; the canonical Start-Process pattern builds in ~45-105s and the window appearing is expected.
 - Later phases: the whitelist is trivially extensible (add `{class,field,sig}` rows); unknowns already degrade safely. Stage C (native FormType-filtered combo box) stays deferred (element-core). kind=9 slots are now visible + editable + copy-safe.
+
+## Issue #6 daemon save-persistence primitives — Tasks 1-2 code-complete (2026-08-10)
+
+What this round delivered:
+- Added additive pending-save readback to both `session.get_dirty_state` and `session.save.dirtyState`: `pendingShutdownFiles` carries each loaded-file summary plus its queued temp filename, and `pendingShutdownCount` remains independent of `dirty` / `unsavedChangeCount`. `system.capabilities.supports.pendingSaveReadback` now advertises the surface without advancing contract 0.22; the consolidated 0.23 bump and docs remain Task 8.
+- Added consent-gated `session.flush`. It snapshots the pending queue and dirty state, releases the complete memory-mapped file graph once, drains queued temp-to-final renames with per-file success/error reporting, retains failed pairs for the trailing process-exit retry, reports remaining queue state, then requests a clean daemon exit. The serve loop blocks subsequent commands once exit is armed and posts `WM_CLOSE` only after writing and flushing the response bytes.
+- Refactored normal process-exit `DoRename` through the same queue-drain helper, leaving one rename implementation. Commits: `0ff83a4c` (pending readback) and `a7588672` (`session.flush`). Per-commit LiteDebug/Win32 build evidence is under `.opencode/artifacts/issue6-7-lane-a/build-1/xEdit.err` and `build-2/xEdit.err`; both final logs show the canonical configuration and `Success`.
+
+Previously unknown, now known:
+- The existing private `FilesToRename` queue can be exposed safely as an immutable snapshot without moving queue ownership out of `xeMainForm`; pending physical persistence can therefore coexist visibly with `dirty:false` instead of being mistaken for a lifecycle all-clear.
+- A viable in-band flush does not require a second persistence stack or per-file force-close. The native `DoRenameModule` path remains authoritative once `wbFileForceClosed` releases all maps; the session is intentionally terminal after that operation.
+- Build-level acceptance is green, but daemon/MO2 semantic acceptance is controller-owned and has not run in this implementation lane. No fresh-PID durability claim is made yet. [SUPERSEDED 2026-08-11 by the full acceptance round below — fresh-PID durability IS now claimed.]
+
+Impact on later phases:
+- The Issue #6 closeout must run the planned canonical MO2 matrix: pending-save temp existence, successful flush response and self-exit, final-file digest/readback under a fresh PID, failure retention/retry behavior where a fixture can exercise it, and empty-queue flush with no file mutation. The response-before-exit ordering is load-bearing and must remain in the serve loop.
+- Lifecycle controllers must stop treating `dirty:false` as sufficient once `supports.pendingSaveReadback` is present; they must inspect `pendingShutdownCount`, use `session.flush` for explicit durability, and relaunch for post-flush readback.
+- Task 8 owns the one contract bump to 0.23 plus contract-reference, compatibility, and durability-example documentation. Do not bump separately for either primitive.
+
+## Issue #6 daemon persistence — follow-up review hardening (2026-08-10)
+
+What this round delivered:
+- Follow-up commit `f76282fe` made pending-save readback non-raising for `.ghost` / unresolved queue keys, added the controller-decided `session.flush` unsaved-dirty refusal (`state_conflict` unless `force:true`), removed cross-snapshot indexing, armed clean exit immediately after the destructive drain, added `Application.Terminate` fallback when no main form can receive `WM_CLOSE`, and renamed flush result identity to `fileName`.
+- Flush-initiated FormClose now skips the normal `SaveChanged` pass after the file graph has been force-closed, preventing modified localization entries from opening an invisible modal. Ordinary GUI closes retain the existing SaveChanged prompt path.
+- The shared drain now restores the explicit post-force-close `wbDontSave` gate and documents that failed pairs remain queued through final process teardown. LiteDebug/Win32 build evidence is `.opencode/artifacts/issue6-7-lane-a/build-3/xEdit.err` (`Success`).
+
+Previously unknown, now known:
+- `wbModuleByName` has a pre-existing `.ghost` suffix-strip defect (`SetLength` adds the suffix length instead of subtracting it), so queue readback cannot rely on throwing name lookup. Automation now falls back to loaded-file identity and, if still unresolved, emits the queue-key name fields rather than failing a pure read.
+- `FormClose` stops the serve loop before calling non-silent `SaveChanged`; modified localization entries can therefore wedge a daemon flush on an invisible selection dialog unless the flush-origin close is distinguished from a user-origin close.
+- Force-closing the file graph creates a strict lifecycle boundary: any exception after the drain must still leave exit armed, while unsaved dirty state must be refused before the drain unless loss is explicitly accepted with `force:true`.
+
+Impact on later phases:
+- Runtime acceptance must add `.ghost` pending-readback, dirty refusal/no-exit, `force:true` report-only loss acceptance, localization-modified flush exit, and nil-MainForm fallback coverage to the original pending-save/flush matrix.
+- Client wrappers should treat `state_conflict` from `session.flush` as an instruction to call `session.save` first; `force:true` is an explicit destructive override, not the default lifecycle path.
+- Do not repair the `.ghost` defect in Core as part of Issue #6; it is upstream-owned and separately reportable. Keep the automation read side robust even if Core lookup remains unchanged.
