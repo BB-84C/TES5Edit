@@ -20,6 +20,9 @@ uses
   Windows,
   JsonDataObjects,
   JvInterpreter,
+  wbInterface,
+  wbLoadOrder,
+  xeAutomationDataLookup,
   xeAutomationErrors,
   xeMainForm,
   xeHeadlessJvIScriptHost,
@@ -534,6 +537,98 @@ begin
     Result := ARunResult.ErrorMessage;
 end;
 
+function xeAutomationScriptsStringArrayContains(const AValues: TArray<string>;
+  const AValue: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(AValues) to High(AValues) do
+    if SameText(AValues[i], AValue) then
+      Exit(True);
+end;
+
+procedure xeAutomationScriptsAppendUniqueString(var AValues: TArray<string>;
+  const AValue: string);
+var
+  lIndex: Integer;
+begin
+  if (AValue = '') or xeAutomationScriptsStringArrayContains(AValues, AValue) then
+    Exit;
+  lIndex := Length(AValues);
+  SetLength(AValues, lIndex + 1);
+  AValues[lIndex] := AValue;
+end;
+
+function xeAutomationScriptsCurrentDirtyFiles: TArray<string>;
+var
+  lModules: TwbModuleInfos;
+  lFile: IwbFile;
+  i: Integer;
+begin
+  SetLength(Result, 0);
+  lModules := wbModulesByLoadOrder;
+  for i := Low(lModules) to High(lModules) do begin
+    lFile := xeAutomationTryPluginFileFromModule(lModules[i]);
+    if Assigned(lFile) and lFile.Modified then
+      xeAutomationScriptsAppendUniqueString(Result, lFile.FileName);
+  end;
+end;
+
+function xeAutomationScriptsDirtyFilesFromState(const ADirtyState: TJsonObject): TArray<string>;
+var
+  lDirtyFiles: TJsonArray;
+  lDirtyFile: TJsonObject;
+  i: Integer;
+begin
+  SetLength(Result, 0);
+  if not Assigned(ADirtyState) or not ADirtyState.Contains('dirtyFiles') or
+    (ADirtyState.Types['dirtyFiles'] <> jdtArray) then
+    Exit;
+
+  lDirtyFiles := ADirtyState.A['dirtyFiles'];
+  for i := 0 to Pred(lDirtyFiles.Count) do begin
+    if lDirtyFiles.Types[i] <> jdtObject then
+      Continue;
+    lDirtyFile := lDirtyFiles.O[i];
+    if lDirtyFile.Contains('name') then
+      xeAutomationScriptsAppendUniqueString(Result, lDirtyFile.S['name']);
+  end;
+end;
+
+function xeAutomationScriptsStringSetsEqual(const ALeft, ARight: TArray<string>): Boolean;
+var
+  i: Integer;
+begin
+  if Length(ALeft) <> Length(ARight) then
+    Exit(False);
+  for i := Low(ALeft) to High(ALeft) do
+    if not xeAutomationScriptsStringArrayContains(ARight, ALeft[i]) then
+      Exit(False);
+  Result := True;
+end;
+
+procedure xeAutomationScriptsAttachFailureMutationDetails(const ADetails: TJsonObject;
+  const ADirtyFilesBefore: TArray<string>; const ARunResult: TxeHeadlessScriptRunResult);
+var
+  lDirtyFilesAfter: TArray<string>;
+  lMutationsApplied: Boolean;
+  i: Integer;
+begin
+  lDirtyFilesAfter := xeAutomationScriptsDirtyFilesFromState(ARunResult.DirtyState);
+  lMutationsApplied := not xeAutomationScriptsStringSetsEqual(ADirtyFilesBefore, lDirtyFilesAfter);
+  ADetails.B['mutationsAppliedBeforeFailure'] := lMutationsApplied;
+  if not lMutationsApplied then
+    Exit;
+
+  // Report only files newly dirtied by this run, excluding pre-existing session
+  // dirtiness that the failed script did not introduce.
+  ADetails.A['modifiedFilesBeforeFailure'];
+  for i := Low(lDirtyFilesAfter) to High(lDirtyFilesAfter) do
+    if not xeAutomationScriptsStringArrayContains(ADirtyFilesBefore, lDirtyFilesAfter[i]) then
+      ADetails.A['modifiedFilesBeforeFailure'].Add(lDirtyFilesAfter[i]);
+end;
+
 procedure xeAutomationScriptsRaiseRunError(const ACode, AMessage: string; const ADetails: TJsonObject);
 begin
   raise xeAutomationNewError(ACode, AMessage, ADetails);
@@ -571,6 +666,7 @@ end;
 
 procedure xeAutomationScriptsTriageFailedRun(const ARunResult: TxeHeadlessScriptRunResult;
   const AOptions: TxeHeadlessScriptRunOptions; const ATimeoutMS, AMaxStatements: Cardinal;
+  const ADirtyFilesBefore: TArray<string>;
   out ATerminatedEarly: Boolean; out ATerminationCode: Int64);
 var
   lDetails: TJsonObject;
@@ -648,6 +744,7 @@ begin
       lDetails.L['elapsedMs'] := ATimeoutMS;
       xeAutomationScriptsAttachLifecycleDetails(lDetails, ARunResult);
       xeAutomationScriptsAttachFailureMessages(lDetails, ARunResult);
+      xeAutomationScriptsAttachFailureMutationDetails(lDetails, ADirtyFilesBefore, ARunResult);
       xeAutomationScriptsRaiseRunError(xeHeadlessScriptErrorTimeout, ARunResult.ErrorMessage, lDetails);
     finally
       lDetails.Free;
@@ -662,6 +759,7 @@ begin
       // consumed statement count; emitting 0 would mislead callers.
       xeAutomationScriptsAttachLifecycleDetails(lDetails, ARunResult);
       xeAutomationScriptsAttachFailureMessages(lDetails, ARunResult);
+      xeAutomationScriptsAttachFailureMutationDetails(lDetails, ADirtyFilesBefore, ARunResult);
       xeAutomationScriptsRaiseRunError(xeHeadlessScriptErrorStatementBudgetExceeded, ARunResult.ErrorMessage, lDetails);
     finally
       lDetails.Free;
@@ -687,6 +785,7 @@ begin
       lDetails.I['targetIndex'] := ARunResult.ProcessedTargetCount;
     xeAutomationScriptsAttachLifecycleDetails(lDetails, ARunResult);
     xeAutomationScriptsAttachFailureMessages(lDetails, ARunResult);
+    xeAutomationScriptsAttachFailureMutationDetails(lDetails, ADirtyFilesBefore, ARunResult);
     xeAutomationScriptsRaiseRunError(xeAutomationScriptsErrorRuntime, ARunResult.ErrorMessage, lDetails);
   finally
     lDetails.Free;
@@ -776,6 +875,7 @@ var
   lTerminatedEarly: Boolean;
   lTerminationCode: Int64;
   lDeniedReason: string;
+  lDirtyFilesBefore: TArray<string>;
 begin
   if not xeAutomationMutationPolicyConsentSatisfied(lDeniedReason) then begin
     Result := xeAutomationErrorsBuildConsentRequired('scripts.run', 'scripts-mutation', lDeniedReason);
@@ -820,6 +920,9 @@ begin
   // Keep the cleanup owner record explicit before the call so overlap/refusal
   // result paths never depend on Delphi's implicit local-record contents.
   lResult := Default(TxeHeadlessScriptRunResult);
+  // Snapshot the session before lifecycle dispatch so failure reporting can
+  // distinguish this run's partial mutations from dirtiness that already existed.
+  lDirtyFilesBefore := xeAutomationScriptsCurrentDirtyFiles;
   lPrevPnlClientEnabled := False;
   lStarted := GetTickCount64;
   if Assigned(frmMain) then
@@ -838,7 +941,7 @@ begin
     lTerminationCode := 0;
     if not lResult.Success then
       xeAutomationScriptsTriageFailedRun(lResult, lOptions, lOptions.TimeoutMS, lOptions.StatementBudget,
-        lTerminatedEarly, lTerminationCode);
+        lDirtyFilesBefore, lTerminatedEarly, lTerminationCode);
 
     Result := xeAutomationScriptsSuccessResult(lNormalizedId, lLintHits, lLintBypassed, lResult,
       lTerminatedEarly, lTerminationCode);
