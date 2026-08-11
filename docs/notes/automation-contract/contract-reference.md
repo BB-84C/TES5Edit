@@ -226,6 +226,24 @@ Unknown future keys may appear. Clients should consume the documented keys below
 
 Runtime policy denials continue to normalize as `script_runtime_error` with `runtimeDenied: true`; this contract does not introduce `script_policy_denied`.
 
+### Policy preflight scope
+
+Before `Initialize` can run, the headless host scans the entry script for bare and
+dotted call-shaped identifiers and checks them against the JvI policy ledger,
+host-resolved globals, script-local routine declarations, and the minimal Pascal
+keyword/type set valid in call position. A refusal keeps the existing
+`script_runtime_error` envelope and adds `policyPreflight: true`,
+`deniedIdentifier`, `preflightLine`, and `preflightColumn`. The existing
+`runtimeDenied: true` field remains present because the refusal uses the same
+stable access-denied parser as dispatch-time policy.
+
+This preflight deliberately covers entry-script call-shaped identifiers only.
+Helper-unit symbols and instance-method calls on local object variables remain
+the responsibility of the installed runtime hook, which stays authoritative for
+argument-sensitive checks and every call preflight cannot classify. False-positive
+control has priority over recall: an uncertain call is left to the runtime hook
+rather than rejecting a working script before execution.
+
 ## Busy / overlap semantics
 
 The contract advertises one process-wide script execution token shared by daemon script runs and GUI Apply Script. `supports.scripts.execution.overlapPolicy` is `single-process-single-runner`, and the possible holders are `daemon` and `gui`.

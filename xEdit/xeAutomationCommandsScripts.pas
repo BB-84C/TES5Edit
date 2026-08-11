@@ -444,14 +444,16 @@ begin
     Result := 2
   else if SameText(APhase, 'compile') then
     Result := 3
-  else if SameText(APhase, 'initialize') then
+  else if SameText(APhase, 'preflight') then
     Result := 4
-  else if SameText(APhase, 'process') then
+  else if SameText(APhase, 'initialize') then
     Result := 5
-  else if SameText(APhase, 'finalize') then
+  else if SameText(APhase, 'process') then
     Result := 6
-  else if SameText(APhase, 'complete') then
+  else if SameText(APhase, 'finalize') then
     Result := 7
+  else if SameText(APhase, 'complete') then
+    Result := 8
   else
     Result := -1;
 end;
@@ -574,6 +576,7 @@ var
   lDetails: TJsonObject;
   lMessage: string;
   lRuntimeDenied: Boolean;
+  lPolicyPreflight: Boolean;
   lDeniedIdentifier: string;
 begin
   ATerminatedEarly := False;
@@ -669,6 +672,12 @@ begin
   try
     xeAutomationScriptsAddFailureLocation(lDetails, ARunResult.ErrorMessage);
     lRuntimeDenied := xeAutomationScriptsTryExtractRuntimeDenial(ARunResult.ErrorMessage, lDeniedIdentifier);
+    lPolicyPreflight := SameText(ARunResult.ErrorCode, xeHeadlessScriptErrorPolicyPreflight);
+    lDetails.B['policyPreflight'] := lPolicyPreflight;
+    if lPolicyPreflight then begin
+      lDetails.I['preflightLine'] := ARunResult.PolicyPreflightLine;
+      lDetails.I['preflightColumn'] := ARunResult.PolicyPreflightColumn;
+    end;
     lDetails.B['runtimeDenied'] := False;
     if lRuntimeDenied then begin
       lDetails.B['runtimeDenied'] := True;

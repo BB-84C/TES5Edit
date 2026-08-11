@@ -19,6 +19,7 @@ const
   xeHeadlessScriptErrorFailed = 'script_failed';
   xeHeadlessScriptErrorTimeout = 'script_timeout';
   xeHeadlessScriptErrorStatementBudgetExceeded = 'script_statement_budget_exceeded';
+  xeHeadlessScriptErrorPolicyPreflight = 'script_policy_preflight';
   xeHeadlessScriptErrorException = 'script_exception';
 
 type
@@ -43,6 +44,8 @@ type
     ExternalDeclarationDenied: Boolean;
     ScriptFailureUnitName: string;
     ScriptFailureLine: Integer;
+    PolicyPreflightLine: Integer;
+    PolicyPreflightColumn: Integer;
     ProcessedTargetCount: Integer;
     Messages: TStringDynArray;
     MessagesTruncated: Boolean;
@@ -67,6 +70,7 @@ uses
   xeAutomationObjectModel,
   xeInit,
   xeScriptExecutionGuard,
+  xeScriptLint,
   xeScriptRuntimePolicy;
 
 const
@@ -112,6 +116,13 @@ type
     UnitName: string;
     Found: PBoolean;
   end;
+
+function xeHeadlessPolicyAllowsCall(const ACalledSymbol: string): Boolean;
+begin
+  // Script-local declarations are removed by the lint scanner's first pass; this
+  // callback supplies the process-wide ledger/host/language side of the decision.
+  Result := xeScriptPolicyIsAllowedCall(ACalledSymbol, nil);
+end;
 
 function xeUtf8PrefixByByteBudget(const AValue: string; const AMaxBytes: Integer): string;
 var
@@ -475,6 +486,7 @@ end;
 function TxeHeadlessJvIHost.Run: TxeHeadlessScriptRunResult;
 var
   lSource: TStringList;
+  lPreflightHits: TArray<TxeScriptLintHit>;
   i: Integer;
   lLocation: string;
 begin
@@ -499,6 +511,20 @@ begin
         FStartTick := GetTickCount64;
         FResult.ScriptLastPhase := 'compile';
         FProgram.Compile;
+
+        // JVCL resolves adapter calls lazily and exposes no post-compile call table.
+        // Scan only entry-script call shapes before lifecycle dispatch; helper-unit
+        // and local-instance calls remain guarded by the authoritative runtime hook.
+        FResult.ScriptLastPhase := 'preflight';
+        lPreflightHits := xeScriptPolicyPreflightCalls(lSource.Text,
+          ExtractFileName(FOptions.EntryScriptPath), xeHeadlessPolicyAllowsCall);
+        if Length(lPreflightHits) > 0 then begin
+          FResult.PolicyPreflightLine := lPreflightHits[0].Line;
+          FResult.PolicyPreflightColumn := lPreflightHits[0].Column;
+          raise xeAutomationNewError(xeHeadlessScriptErrorPolicyPreflight,
+            Format('Access denied to ''%s: policy preflight: symbol is not in the JvI ledger or host-global allowlist''',
+              [lPreflightHits[0].Symbol]));
+        end;
 
         try
           FResult.ScriptLastPhase := 'initialize';

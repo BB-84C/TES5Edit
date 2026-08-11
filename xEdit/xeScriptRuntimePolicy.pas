@@ -11,6 +11,9 @@ unit xeScriptRuntimePolicy;
 interface
 
 function IsPathUnderScriptsRoot(const aPath: string): Boolean;
+function xePolicyEntryMatchesSymbolOnly(const AEntrySymbol, ACalledSymbol: string): Boolean;
+function xeScriptPolicyIsAllowedCall(const ACalledSymbol: string;
+  const ADeclared: TArray<string>): Boolean;
 procedure xeInstallScriptRuntimePolicy;
 procedure xeUninstallScriptRuntimePolicy;
 
@@ -48,6 +51,28 @@ const
   xePathPrefixWin32Device = '\\?\';
   xePathPrefixDosDevice = '\\.\';
   xePathPrefixNativeDosDevice = '\??\';
+
+  xeScriptPolicyHostGlobals: array[0..17] of PChar = (
+    'AddMessage', 'ScriptLastPhase', 'ScriptFailed', 'ScriptFailureCode',
+    'ScriptFailureMessage', 'ProgramPath', 'wbProgramPath', 'ScriptsPath',
+    'wbScriptsPath', 'DataPath', 'wbDataPath', 'TempPath', 'wbTempPath',
+    'FileCount', 'FileByIndex', 'FileByLoadOrderFileID', 'FileByLoadOrder',
+    'FileByName');
+
+  // These tokens can be followed by parentheses in valid Pascal syntax even
+  // though they are language constructs rather than JvI adapter calls.
+  xeScriptPolicyCallKeywords: array[0..20] of PChar = (
+    'if', 'while', 'for', 'case', 'with', 'until', 'and', 'or', 'not', 'div',
+    'mod', 'shl', 'shr', 'in', 'as', 'is', 'exit', 'break', 'continue', 'raise',
+    'inherited');
+
+  // Minimal builtin cast set accepted in call position. Adapter-defined classes
+  // and helpers still require a ledger row rather than broad type-family trust.
+  xeScriptPolicyCastTypes: array[0..20] of PChar = (
+    'integer', 'cardinal', 'byte', 'word', 'int64', 'longint', 'longword',
+    'shortint', 'smallint', 'string', 'ansistring', 'widestring', 'char',
+    'boolean', 'single', 'double', 'real', 'extended', 'variant', 'pointer',
+    'tobject');
 
   // The runtime policy deliberately stays ledger-shaped instead of using broad
   // type-family shortcuts so newly exposed JvI surfaces remain deny-by-default.
@@ -914,6 +939,58 @@ begin
     Exit;
 
   Result := xeStrictDescendantOf(lCandidateFinalPath, lRootFinalPath);
+end;
+
+function xePolicyEntryMatchesSymbolOnly(const AEntrySymbol, ACalledSymbol: string): Boolean;
+begin
+  // Source preflight has no runtime object class. Require the complete lexical
+  // symbol instead of applying the class/member fallback used by dispatch-time policy.
+  Result := SameText(AEntrySymbol, ACalledSymbol);
+end;
+
+function xeScriptPolicyStringArrayContains(const AValues: array of PChar;
+  const AValue: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(AValues) to High(AValues) do
+    if SameText(string(AValues[i]), AValue) then
+      Exit(True);
+end;
+
+function xeScriptPolicyDeclaredContains(const ADeclared: TArray<string>;
+  const AValue: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(ADeclared) to High(ADeclared) do
+    if SameText(ADeclared[i], AValue) then
+      Exit(True);
+end;
+
+function xeScriptPolicyIsAllowedCall(const ACalledSymbol: string;
+  const ADeclared: TArray<string>): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(xeScriptRuntimePolicyEntries) to High(xeScriptRuntimePolicyEntries) do
+    if xePolicyEntryMatchesSymbolOnly(string(xeScriptRuntimePolicyEntries[i].Symbol), ACalledSymbol) then
+      Exit(True);
+
+  if xeScriptPolicyStringArrayContains(xeScriptPolicyHostGlobals, ACalledSymbol) or
+    xeScriptPolicyDeclaredContains(ADeclared, ACalledSymbol) or
+    xeScriptPolicyStringArrayContains(xeScriptPolicyCallKeywords, ACalledSymbol) or
+    xeScriptPolicyStringArrayContains(xeScriptPolicyCastTypes, ACalledSymbol) then
+    Exit(True);
+
+  // A dotted source symbol can be an instance call on a local object, whose class
+  // exists only at runtime. Prefer a safe runtime denial over a preflight false
+  // positive; exact dotted ledger symbols above are still recognized pre-execution.
+  if Pos('.', ACalledSymbol) > 0 then
+    Exit(True);
 end;
 
 function xeEntrySymbolMatches(const aEntrySymbol, aIdentifier: string; aObjClass: TClass): Boolean;

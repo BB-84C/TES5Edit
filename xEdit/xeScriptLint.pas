@@ -10,6 +10,9 @@ unit xeScriptLint;
 
 interface
 
+uses
+  SysUtils;
+
 type
   TxeScriptLintHit = record
     Kind: string;
@@ -19,12 +22,16 @@ type
     SourceUnit: string;
   end;
 
+  TxeScriptPolicyCallPredicate = function(const ACalledSymbol: string): Boolean;
+
 function xeLintScriptEntrySource(const ASource, ASourceUnit: string): TArray<TxeScriptLintHit>;
+function xeScriptPolicyPreflightCalls(const ASource, ASourceUnit: string;
+  AIsAllowedCall: TxeScriptPolicyCallPredicate): TArray<TxeScriptLintHit>;
 
 implementation
 
 uses
-  SysUtils;
+  System.Generics.Collections;
 
 type
   TxeScriptLintDenySymbol = record
@@ -233,6 +240,11 @@ begin
       Continue;
     end;
 
+    if ASource[AIndex] = '''' then begin
+      xeSkipStringLiteral(ASource, AIndex, ALine, AColumn);
+      Continue;
+    end;
+
     if ASource[AIndex] = '{' then begin
       xeSkipBraceComment(ASource, AIndex, ALine, AColumn);
       Continue;
@@ -373,6 +385,94 @@ begin
     end;
 
     xeAdvanceSourceChar(ASource, lIndex, lLine, lColumn);
+  end;
+end;
+
+function xeScriptPolicyTokenIsIdentifier(const AToken: TxeScriptLintToken): Boolean;
+begin
+  Result := (AToken.Text <> '') and xeIsIdentifierStart(AToken.Text[1]);
+end;
+
+function xeScriptPolicyDeclaredContains(const ADeclared: TArray<string>; const ASymbol: string): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+  for i := Low(ADeclared) to High(ADeclared) do
+    if SameText(ADeclared[i], ASymbol) then
+      Exit(True);
+end;
+
+procedure xeScriptPolicyAppendDeclared(var ADeclared: TArray<string>; const ASymbol: string);
+var
+  lIndex: Integer;
+begin
+  if (ASymbol = '') or xeScriptPolicyDeclaredContains(ADeclared, ASymbol) then
+    Exit;
+  lIndex := Length(ADeclared);
+  SetLength(ADeclared, lIndex + 1);
+  ADeclared[lIndex] := ASymbol;
+end;
+
+function xeScriptPolicyPreflightCalls(const ASource, ASourceUnit: string;
+  AIsAllowedCall: TxeScriptPolicyCallPredicate): TArray<TxeScriptLintHit>;
+var
+  lTokens: TList<TxeScriptLintToken>;
+  lDeclared: TArray<string>;
+  lToken: TxeScriptLintToken;
+  lCalledSymbol: string;
+  lIndex: Integer;
+  lLine: Integer;
+  lColumn: Integer;
+  i: Integer;
+  j: Integer;
+begin
+  SetLength(Result, 0);
+  SetLength(lDeclared, 0);
+  lTokens := TList<TxeScriptLintToken>.Create;
+  try
+    lIndex := 1;
+    lLine := 1;
+    lColumn := 1;
+    while xeReadNextSignificantToken(ASource, lIndex, lLine, lColumn, lToken) do
+      lTokens.Add(lToken);
+
+    // Discover declarations before checking calls so forward references and calls
+    // appearing above a later body are treated like normal script-local routines.
+    for i := 0 to lTokens.Count - 2 do
+      if (SameText(lTokens[i].Text, 'function') or SameText(lTokens[i].Text, 'procedure')) and
+        xeScriptPolicyTokenIsIdentifier(lTokens[i + 1]) then
+        xeScriptPolicyAppendDeclared(lDeclared, lTokens[i + 1].Text);
+
+    i := 0;
+    while i < lTokens.Count do begin
+      if not xeScriptPolicyTokenIsIdentifier(lTokens[i]) or
+        ((i > 0) and (lTokens[i - 1].Text = '.')) then begin
+        Inc(i);
+        Continue;
+      end;
+
+      lCalledSymbol := lTokens[i].Text;
+      j := i;
+      while (j + 2 < lTokens.Count) and (lTokens[j + 1].Text = '.') and
+        xeScriptPolicyTokenIsIdentifier(lTokens[j + 2]) do begin
+        lCalledSymbol := lCalledSymbol + '.' + lTokens[j + 2].Text;
+        Inc(j, 2);
+      end;
+
+      // Reads of locals and parameters are intentionally ignored. Only lexical
+      // call shapes enter preflight; runtime policy remains the authority for
+      // helper units, argument-sensitive policy, and object-instance dispatch.
+      if (j + 1 < lTokens.Count) and (lTokens[j + 1].Text = '(') and
+        not xeScriptPolicyDeclaredContains(lDeclared, lCalledSymbol) and
+        Assigned(AIsAllowedCall) and not AIsAllowedCall(lCalledSymbol) then
+        xeAppendLintHit(Result, 'POLICY_PREFLIGHT', lCalledSymbol,
+          lTokens[i].Line, lTokens[i].Column, ASourceUnit);
+
+      i := j + 1;
+    end;
+  finally
+    lTokens.Free;
   end;
 end;
 
