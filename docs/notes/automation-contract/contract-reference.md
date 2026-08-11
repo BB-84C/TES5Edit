@@ -228,10 +228,13 @@ Runtime policy denials continue to normalize as `script_runtime_error` with `run
 
 ### Policy preflight scope
 
-Before `Initialize` can run, the headless host scans the entry script for bare and
-dotted call-shaped identifiers and checks them against the JvI policy ledger,
-host-resolved globals, script-local routine declarations, and the minimal Pascal
-keyword/type set valid in call position. A refusal keeps the existing
+Before `Initialize` can run, the headless host scans the entry script for
+call-shaped identifiers. Bare calls are checked against the JvI policy ledger,
+host-resolved globals, routine declarations from the entry script and helper units
+loaded during compile, and the minimal Pascal keyword/type set valid in call
+position. Dotted calls with an exact explicit ledger denial are refused; other
+dotted calls are conservatively allowed because they may be instance methods on
+local variables, and remain guarded by the runtime hook. A refusal keeps the existing
 `script_runtime_error` envelope and adds `policyPreflight: true`,
 `deniedIdentifier`, `preflightLine`, and `preflightColumn`. The existing
 `runtimeDenied: true` field remains present because the refusal uses the same

@@ -616,6 +616,15 @@ var
   i: Integer;
 begin
   lDirtyFilesAfter := xeAutomationScriptsDirtyFilesFromState(ARunResult.DirtyState);
+
+  // Dirty is a per-file Boolean, not a mutation generation counter. A file that
+  // was dirty both before and after the run may or may not have been touched by
+  // this script; expose that pre-existing set so clients can treat false as
+  // "no newly dirty file observed" rather than proof that no mutation occurred.
+  ADetails.A['preExistingDirtyFiles'];
+  for i := Low(ADirtyFilesBefore) to High(ADirtyFilesBefore) do
+    ADetails.A['preExistingDirtyFiles'].Add(ADirtyFilesBefore[i]);
+
   lMutationsApplied := not xeAutomationScriptsStringSetsEqual(ADirtyFilesBefore, lDirtyFilesAfter);
   ADetails.B['mutationsAppliedBeforeFailure'] := lMutationsApplied;
   if not lMutationsApplied then
