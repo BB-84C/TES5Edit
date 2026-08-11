@@ -832,8 +832,10 @@ Success response:
 ```
 
 Each `flushedFiles` entry contains `fileName`, `renamed`, and optional `error`.
-A failed rename remains queued for the normal process-exit retry and stays visible
-in `pendingRemaining`. The returned `dirtyState` is the pre-drain snapshot used by
+`pendingRemaining` is an array of file-name strings (not objects) for the pairs
+still queued after the drain. A failed rename remains queued for the normal
+process-exit retry and stays visible in `pendingRemaining`. The returned
+`dirtyState` is the pre-drain snapshot used by
 the safety check, so it still shows pending entries that the same response reports
 as successfully drained. An empty pending queue follows the same
 unambiguous lifecycle: the command returns empty arrays and then exits.

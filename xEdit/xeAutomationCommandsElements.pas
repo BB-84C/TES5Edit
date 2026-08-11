@@ -830,7 +830,10 @@ begin
     Result.O['file'] := xeAutomationNewFileSummary(lRecord._File);
     Result.O['before'].Assign(lBefore);
     Result.O['after'] := xeAutomationElementsSetNativeValueBuildBeforeAfter(lElement);
-    xeAutomationElementsAppendSortableContainerNotice(Result, lSortableContainer);
+    // Mirror elements.set_value: the advisory notice fires only when the write
+    // actually changed a value; a no-op write does not invalidate a sorted order.
+    xeAutomationElementsAppendSortableContainerNotice(
+      Result, lSortableContainer and (lBefore.S['editValue'] <> lElement.EditValue));
   finally
     lBefore.Free;
   end;

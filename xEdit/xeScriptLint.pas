@@ -422,8 +422,15 @@ var
 begin
   for i := 0 to ATokens.Count - 2 do
     if (SameText(ATokens[i].Text, 'function') or SameText(ATokens[i].Text, 'procedure')) and
-      xeScriptPolicyTokenIsIdentifier(ATokens[i + 1]) then
-      xeScriptPolicyAppendDeclared(ADeclared, ATokens[i + 1].Text);
+      xeScriptPolicyTokenIsIdentifier(ATokens[i + 1]) then begin
+      // Qualified routine headers (`function TFoo.Bar(`) declare the member
+      // name, not the class token; skip the dot pair when present.
+      if (i + 3 < ATokens.Count) and (ATokens[i + 2].Text = '.') and
+        xeScriptPolicyTokenIsIdentifier(ATokens[i + 3]) then
+        xeScriptPolicyAppendDeclared(ADeclared, ATokens[i + 3].Text)
+      else
+        xeScriptPolicyAppendDeclared(ADeclared, ATokens[i + 1].Text);
+    end;
 end;
 
 procedure xeScriptPolicyCollectDeclarationsFromSource(const ASource: string;

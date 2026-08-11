@@ -39,7 +39,13 @@ Current: **0.23** (accepted lifecycle readback, flush, and script-safety closeou
 ## 0.23 (2026-08-11) — lifecycle readback, flush, and script-safety closeout
 
 This is an additive contract bump. No 0.22 field or command was removed, renamed,
-or semantically narrowed.
+or semantically narrowed. Behavior note: the new script policy preflight can
+refuse entry scripts that 0.22 executed — a symbol outside the policy ledger,
+host-global, declared-routine, and keyword/type allowlists now fails with
+`policyPreflight:true` before `Initialize` (non-mutating) instead of being denied
+at runtime mid-run. Consumers upgrading should treat this as an
+acceptance-surface change and re-validate scripts that call ledger-unadmitted
+symbols (e.g. unregistered stock builtins such as `Format`/`Length`).
 
 - Added to `session.get_dirty_state` and `session.save.result.dirtyState`:
   `pendingShutdownFiles` and `pendingShutdownCount`. Each pending entry contains
