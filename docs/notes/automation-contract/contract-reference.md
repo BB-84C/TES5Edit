@@ -4,13 +4,14 @@ This reference freezes the wrapper-facing contract proven so far from preserved 
 
 ## Versioning
 
-- Current `contractVersion`: `0.22`, pending Phase 17 Starfield runtime verification.
+- Current `contractVersion`: `0.23`, accepted on the FO4 MO2-backed harness.
 - Client rule: ignore unknown keys on objects and arrays unless a later contract version explicitly says otherwise.
 - `supports.jobs.kinds` is frozen byte-for-byte across the `0.7` to `0.8` delta. The script-execution descriptors are adjacent to the job-kind list; script execution is not added to `jobs.*`.
 
 ## Capability discovery
 
-Call `system.capabilities` before assuming wrapper behavior. The fields to key on are under `result.supports.scripts.execution`:
+Call `system.capabilities` before assuming wrapper behavior. Script-execution
+fields to key on under `result.supports.scripts.execution` are:
 
 - `synchronous: true`
 - `cancelable: false`
@@ -18,6 +19,13 @@ Call `system.capabilities` before assuming wrapper behavior. The fields to key o
 - `busyHolders: ["daemon", "gui"]`
 - `failureMessagesOnError: true`
 - `iKnowWhatImDoing: false|true` reflecting daemon launch state
+
+The 0.23 command-level capability flags are top-level members of
+`result.supports`:
+
+- `pendingSaveReadback: true`
+- `sessionFlush: true`
+- `sortableContainerNotice: true`
 
 ## Transport and framing
 
@@ -203,6 +211,9 @@ Unknown future keys may appear. Clients should consume the documented keys below
 - `processed`
 - `messages`
 - `messagesTruncated`
+- `preExistingDirtyFiles`
+- `mutationsAppliedBeforeFailure`
+- `modifiedFilesBeforeFailure` when `mutationsAppliedBeforeFailure` is true
 
 ### `script_statement_budget_exceeded`
 
@@ -212,33 +223,40 @@ Unknown future keys may appear. Clients should consume the documented keys below
 - `processed`
 - `messages`
 - `messagesTruncated`
+- `preExistingDirtyFiles`
+- `mutationsAppliedBeforeFailure`
+- `modifiedFilesBeforeFailure` when `mutationsAppliedBeforeFailure` is true
 
 ### `script_runtime_error`
 
+- `policyPreflight`
 - `runtimeDenied`
 - `deniedIdentifier` when denial was detected
+- `preflightLine` and `preflightColumn` when `policyPreflight` is true
 - `targetIndex` when Process-phase failure indexing is meaningful
 - `ranInitialize`
 - `ranFinalize`
 - `processed`
 - `messages`
 - `messagesTruncated`
+- `preExistingDirtyFiles`
+- `mutationsAppliedBeforeFailure`
+- `modifiedFilesBeforeFailure` when `mutationsAppliedBeforeFailure` is true
 
 Runtime policy denials continue to normalize as `script_runtime_error` with `runtimeDenied: true`; this contract does not introduce `script_policy_denied`.
 
 ### Policy preflight scope
 
-Before `Initialize` can run, the headless host scans the entry script for
-call-shaped identifiers. Bare calls are checked against the JvI policy ledger,
-host-resolved globals, routine declarations from the entry script and helper units
-loaded during compile, and the minimal Pascal keyword/type set valid in call
-position. Dotted calls with an exact explicit ledger denial are refused; other
-dotted calls are conservatively allowed because they may be instance methods on
-local variables, and remain guarded by the runtime hook. A refusal keeps the existing
+After compilation and before `Initialize`, the headless host scans the entry
+script for call-shaped identifiers. Bare calls are checked against the JvI policy
+ledger, host-resolved globals, routines declared in the entry script, and the
+minimal Pascal keyword/type allowlist valid in call position. Dotted calls are
+conservatively allowed because they may be instance methods on local variables,
+and remain guarded by the runtime hook. A refusal keeps the existing
 `script_runtime_error` envelope and adds `policyPreflight: true`,
-`deniedIdentifier`, `preflightLine`, and `preflightColumn`. The existing
-`runtimeDenied: true` field remains present because the refusal uses the same
-stable access-denied parser as dispatch-time policy.
+`deniedIdentifier`, `preflightLine`, and `preflightColumn`. Its standard
+`Access denied to '<identifier>: ...'` message also keeps `runtimeDenied: true`.
+Because this refusal occurs before `Initialize`, no script mutation can occur.
 
 This preflight deliberately covers entry-script call-shaped identifiers only.
 Helper-unit symbols and instance-method calls on local object variables remain
@@ -246,6 +264,33 @@ the responsibility of the installed runtime hook, which stays authoritative for
 argument-sensitive checks and every call preflight cannot classify. False-positive
 control has priority over recall: an uncertain call is left to the runtime hook
 rather than rejecting a working script before execution.
+
+### Partial-mutation reporting
+
+Runtime/exception, timeout, and statement-budget failures report the dirty-file
+state observed around the failed run:
+
+- `preExistingDirtyFiles` lists files that were already dirty before the run.
+- `mutationsAppliedBeforeFailure` is true when the post-failure dirty-file set
+  differs from the pre-run set.
+- `modifiedFilesBeforeFailure`, emitted when that boolean is true, lists files
+  newly dirtied by the failed run.
+
+Dirty state is a per-file boolean, not a mutation generation counter. A file that
+was dirty both before and after the run may or may not have been touched by the
+run. Thus `mutationsAppliedBeforeFailure:false` means no newly dirty file was
+observed; it is not proof that the script performed no write to a pre-dirty file.
+
+## Script-side additions (0.23)
+
+- `RecordByFormIDStrict(file, formId, allowInjected)` interprets `formId` in
+  load-order space and resolves it through the owning file. It returns nil when
+  that owner is neither `file` itself nor a member of its master chain, and never
+  raises for an ownership mismatch. Legacy `RecordByFormID` is unchanged.
+- `IntToStr64(value)` is registered in the script-visible `SysUtils` surface.
+- `IntToHex(value, digits)` is the plain two-argument formatter with Int64
+  semantics, so values at or above `$80000000` format correctly. `IntToHex64`
+  remains available.
 
 ## Busy / overlap semantics
 
@@ -701,20 +746,99 @@ records return an explicitly empty `parents: []` when requested. If
 
 ## Save / durability semantics
 
-`session.save` is the explicit save seam. A successful response reports what xEdit did during that save operation:
+`session.get_dirty_state` reports both unsaved in-memory changes and deferred
+rename state:
+
+```json
+{
+  "dirtyFiles": [],
+  "unsavedChangeCount": 0,
+  "dirty": false,
+  "pendingShutdownFiles": [
+    {
+      "tempFile": "Patch.esp.save.2026_08_11_12_34_56",
+      "file": { "name": "Patch.esp", "fileName": "Patch.esp" }
+    }
+  ],
+  "pendingShutdownCount": 1
+}
+```
+
+`session.save` is the explicit save seam. A successful response reports what
+xEdit did during that save operation:
 
 - `savedFilesNow`: files saved immediately in that call.
 - `savedFilesPendingShutdown`: files whose save succeeded but whose final rename/durability is deferred until shutdown.
 - `savedNowCount` and `savePendingShutdownCount`: counts for the two arrays.
 - `dirtyState`: dirty-state readback after the save operation.
 
-A successful `session.save` response is not by itself a fresh-restart durability proof. Strong durability claims need a later restart/readback artifact. The durability audit captured:
+For an already-loaded memory-mapped plugin, xEdit writes the saved bytes to a
+`<name>.save.<timestamp>` temp file in the data path and queues the rename onto
+the final module name. That rename is deferred until process exit or
+`session.flush`. Saving clears the plugin's modified flag, so `dirty:false` can
+coexist with `pendingShutdownCount > 0`; pending readback is the lifecycle
+all-clear companion to dirty state, not another form of dirty state. Both
+`session.get_dirty_state` and `session.save.result.dirtyState` use this shape.
+
+Clients can discover the readback through `supports.pendingSaveReadback: true`.
+
+A successful `session.save` response is not by itself a fresh-restart durability
+proof. Strong durability claims need `session.flush` or a later process-exit plus
+fresh-relaunch readback. The earlier durability audit captured:
 
 - `audits\save-now.json`: `savedNowCount: 1`, `savePendingShutdownCount: 0`, and `dirtyState.dirty: false` for a newly created first-save file.
 - `audits\save-pending.json`: `savedNowCount: 0`, `savePendingShutdownCount: 1`, and `dirtyState.dirty: false` after reloading an already-on-disk target, mutating it again, and saving.
 - `audits\save-pending-after-restart.json`: a fresh daemon readback found the second saved keyword in `VT_AutomationAudit_Pending_rerun2_20260508.esp`, proving the pending-shutdown response needed the explicit restart/readback step for a strong durability claim.
 
 See `examples/05-save-durability.md` for the wrapper-facing save example and the locator/durability audit for the corresponding audit table.
+
+## `session.flush` (0.23)
+
+`session.flush` is a `session-mutation` command and therefore requires daemon
+consent (`-IKnowWhatImDoing`). It snapshots dirty state, drains the pending-rename
+queue in-band, reports each rename, and arms a clean daemon self-exit. The serve
+loop writes and flushes the complete response bytes before honoring that exit;
+once exit is armed, no further commands are accepted.
+
+Optional argument:
+
+- `force` (boolean, default `false`). Without it, a pre-flush dirty state with
+  unsaved modified files returns `state_conflict`, because those files are not in
+  the pending-rename queue. Call `session.save` first or explicitly pass
+  `force:true` to accept discarding those unsaved changes during exit.
+
+Success response:
+
+```json
+{
+  "flushedFiles": [
+    { "fileName": "Patch.esp", "renamed": true }
+  ],
+  "pendingRemaining": [],
+  "pendingRemainingCount": 0,
+  "dirtyState": {
+    "dirtyFiles": [],
+    "unsavedChangeCount": 0,
+    "dirty": false,
+    "pendingShutdownFiles": [
+      {
+        "tempFile": "Patch.esp.save.2026_08_11_12_34_56",
+        "file": { "name": "Patch.esp", "fileName": "Patch.esp" }
+      }
+    ],
+    "pendingShutdownCount": 1
+  }
+}
+```
+
+Each `flushedFiles` entry contains `fileName`, `renamed`, and optional `error`.
+A failed rename remains queued for the normal process-exit retry and stays visible
+in `pendingRemaining`. The returned `dirtyState` is the pre-drain snapshot used by
+the safety check, so it still shows pending entries that the same response reports
+as successfully drained. An empty pending queue follows the same
+unambiguous lifecycle: the command returns empty arrays and then exits.
+
+Clients can discover this command through `supports.sessionFlush: true`.
 
 ## Client parsing rules
 

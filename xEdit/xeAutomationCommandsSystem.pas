@@ -150,11 +150,10 @@ var
   lReverseNavigation: TJsonObject;
 begin
   Result := TJsonObject.Create;
-  // Contract 0.22 documents two wire-visible compatibility fixes: locator.path
-  // may be omitted (defaulting to the record root), and records.copy_into now
-  // forwards native nil-copy refusal reasons for Starfield Reflection and
-  // Unmapped FormID gate failures instead of only the generic fallback.
-  Result.S['contractVersion'] := '0.22';
+  // Contract 0.23 consolidates the additive lifecycle/readback surface for
+  // pending saves, in-band flush, script policy preflight, partial-mutation
+  // reporting, and the newly registered script helpers.
+  Result.S['contractVersion'] := '0.23';
 
   xeAutomationEnsureCapabilityCommandSurface;
 

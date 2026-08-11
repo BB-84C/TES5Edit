@@ -4,18 +4,18 @@
 
 This subsystem makes promises along these axes; each axis has its own compatibility tier:
 
-| Axis | Stability tier (at 0.22) | Notes |
+| Axis | Stability tier (at 0.23) | Notes |
 |---|---|---|
 | Wire protocol envelope shape | Frozen | `{ok, result}` and `{ok, error: {code, details}}` shapes are stable. |
 | `system.capabilities` schema | Additive-only | New fields under `supports.*` are additive; clients ignore unknown keys. |
 | `supports.jobs.kinds` membership and order | Frozen | Byte-for-byte preserved from earlier freeze. Adding a kind is a major bump. |
-| Per-code `error.details` shape (7 lifecycle codes) | Frozen | `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. Adding a field to any of these is a major bump. |
+| Per-code `error.details` shape (7 lifecycle codes) | Frozen at the 0.23 baseline | `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The 0.23 bump additively extends the timeout, statement-budget, and runtime-error shapes as documented below. |
 | Request-validation tier error codes | Additive-only | New codes (e.g., `consent_required` in 0.9) may be introduced without major bump provided existing codes' details shapes are preserved. |
 | Game-mode support | Best-effort | Verified against FO4; other modes inherit by structure but are not warranty-tested. |
 
 ## Contract Version
 
-Current: **0.22** (bounded daemon-surface compatibility fixes; Phase 17 runtime verification pending)
+Current: **0.23** (accepted lifecycle readback, flush, and script-safety closeout)
 
 ### Additive history
 
@@ -34,6 +34,33 @@ Current: **0.22** (bounded daemon-surface compatibility fixes; Phase 17 runtime 
 - **0.20: Phase 15G** — `supports.applyFilterExtensions.multiPattern` and scalar-or-array OR semantics for `records.apply_filter` identifier pattern/regex fields
 - **0.21: Phase 16** — `records.apply_filter` offset pagination, `limit>100` rejection, and Starfield small/localized header-flag capability updates
 - **0.22: bounded daemon-surface fixes** — locator `path` omission defaults to `""`, and `records.copy_into` reports native Reflection / Unmapped FormID nil-copy reasons when diagnosed
+- **0.23: automation contract closeout** — pending-save readback, `session.flush`, script policy preflight and partial-mutation reporting, `RecordByFormIDStrict`, `IntToStr64` / `IntToHex`, and sortable-container notices
+
+## 0.23 (2026-08-11) — lifecycle readback, flush, and script-safety closeout
+
+This is an additive contract bump. No 0.22 field or command was removed, renamed,
+or semantically narrowed.
+
+- Added to `session.get_dirty_state` and `session.save.result.dirtyState`:
+  `pendingShutdownFiles` and `pendingShutdownCount`. Each pending entry contains
+  the queued `tempFile` plus the loaded `file` summary. Pending rename state is
+  independent of dirty state, so `dirty:false` can coexist with pending entries.
+- Added command `session.flush`, capability `supports.sessionFlush`, and
+  capability `supports.pendingSaveReadback`. `session.flush` is consent-gated,
+  drains pending renames with per-file results, and cleanly exits only after its
+  response has been written and flushed. It refuses dirty sessions without
+  `force:true`; failed renames remain queued and visible for process-exit retry.
+- Added `scripts.run` policy-preflight details: `policyPreflight`,
+  `deniedIdentifier`, `preflightLine`, and `preflightColumn`. A denied entry-script
+  call fails before `Initialize`, so it cannot mutate plugin state.
+- Added `scripts.run` failure mutation details on runtime/exception, timeout, and
+  statement-budget failures: `mutationsAppliedBeforeFailure`, conditional
+  `modifiedFilesBeforeFailure`, and `preExistingDirtyFiles`.
+- Added script-side `RecordByFormIDStrict`, `IntToStr64`, and the two-argument
+  Int64-semantic `IntToHex`. Legacy `RecordByFormID` is unchanged.
+- Added `supports.sortableContainerNotice` and the advisory `sortInvalidated` /
+  `notice` fields on successful writes beneath sorted containers. The notice is
+  non-blocking and absent when no sort invalidation occurred.
 
 ## 0.22 (2026-07-08) — locator default + copy_into nil-copy diagnostics
 
@@ -229,25 +256,25 @@ Frozen Phase 6E `supports.jobs.kinds` membership and order unchanged.
 Note: clients should not assume new `object.kind` enum values are exhaustive.
 Forward compatibility requires that unknown `kind` values are ignored.
 
-## What `0.22` promises
+## What `0.23` promises
 
-The `0.22` public wrapper-facing contract surface comprises:
+The `0.23` public wrapper-facing contract surface comprises:
 
 - **Wire envelope shapes**: `{ok: true, result: <value>}` for success; `{ok: false, error: {code: <string>, details: <object>}}` for failure. Both shapes are stable across `0.x` versions.
-- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, and `supports.reverseNavigation` blocks introduced through 0.22.
+- **`system.capabilities` schema**: top-level `contractVersion` (string), `supports.transport.*`, `supports.jobs.kinds` (frozen membership and order — see below), `supports.jobs.options`, `supports.scripts.execution.*` including `overlapPolicy = "single-process-single-runner"`, `busyHolders`, `failureMessagesOnError`, the new-in-0.9 `iKnowWhatImDoing` boolean reflecting daemon launch state, and the additive `supports.elementsMutation`, `supports.stringDecoding`, `supports.childGroupNavigation`, `supports.applyFilterExtensions`, `supports.referencesRecursive`, `supports.conflictStatusChildGroup`, `supports.createParentSpec`, `supports.elementsChildrenPagination`, `supports.reverseNavigation`, `supports.pendingSaveReadback`, `supports.sessionFlush`, and `supports.sortableContainerNotice` surfaces introduced through 0.23.
 - **`supports.jobs.kinds` membership and order**: byte-for-byte preserved from the earlier freeze. The exact list is enumerated in `contract-reference.md`. Adding, removing, or reordering any kind is a major bump.
-- **Per-code `error.details` shape for the 7 lifecycle codes**: `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The full per-code field set is documented in `contract-reference.md` and is preserved byte-for-byte from `0.8` into `0.9`. Adding a field to any of these codes is a major bump.
+- **Per-code `error.details` shape for the 7 lifecycle codes**: `script_blocker_lint`, `script_busy`, `script_external_declaration_not_allowed`, `script_compile_error`, `script_timeout`, `script_statement_budget_exceeded`, `script_runtime_error`. The full 0.23 baseline is documented in `contract-reference.md`; future changes require another contract bump.
 - **New request-validation tier error code `consent_required`**: `error.details = {deniedReason: string, commandName: string, mutationCategory: string}`. Returned at the request boundary when a mutating command is issued against a daemon launched without `-IKnowWhatImDoing`. Does NOT carry script-lifecycle fields (`messages`, `messagesTruncated`, `ranInitialize`, etc.) because no script execution has begun.
 - **Locator semantics**: file-by-name and master-by-id resolution rules from `0.8` are preserved. As of 0.22, omitted `path` defaults to `""`.
-- **Durability semantics**: `session.save` saved-files vs pending-shutdown distinction from `0.8` is preserved.
+- **Durability semantics**: `session.save` saved-files vs pending-shutdown distinction from `0.8` is preserved and now has explicit pending-queue readback plus the `session.flush` drain-and-exit path.
 
 The full schema reference, per-field types, and per-command envelope examples live in `contract-reference.md`.
 
 ## What counts as breaking
 
-- Renaming any field present in `0.22`.
-- Removing any field present in `0.22`.
-- Semantically narrowing the meaning of any field present in `0.22`.
+- Renaming any field present in `0.23`.
+- Removing any field present in `0.23`.
+- Semantically narrowing the meaning of any field present in `0.23`.
 - Adding a member to or reordering `supports.jobs.kinds`.
 - Adding a field to or modifying any frozen 7-code lifecycle `error.details` shape.
 
