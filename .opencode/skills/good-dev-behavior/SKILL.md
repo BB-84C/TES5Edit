@@ -50,20 +50,18 @@ Do not use this skill as a substitute for product design. It governs repo hygien
 17a. On this machine, when `bds.exe -b` fails, or when the captured stdout/stderr evidence is incomplete or ambiguous, inspect the repo-root `xEdit.err` file before trying any alternate build command. Treat `xEdit.err` as the canonical compiler transcript for root-cause triage unless proved otherwise.
 17b. After a failed or ambiguous `bds.exe -b` run, do not thrash through extra build commands just to hunt for output. First read `xEdit.err`, identify the actual compiler blocker, and only then decide whether the issue is source, capture plumbing, or build-route selection.
 17c. If a bounded worker subagent such as `@fixer` runs the canonical build during implementation, it must still follow the same rule: first failed-build diagnosis is `xEdit.err`, not improvised alternate build commands. If diagnosis stops being mechanical, keep control in the main session.
-18. For local runtime verification of automation commands, do not launch an arbitrary xEdit instance directly from the repo or from a random Fallout 4 installation. Use the MO2-managed harness rooted at `D:\awesome-bgs-mod-master\.artifacts\mo2` so xEdit runs inside the known low-noise mod profile and the correct Fallout 4 environment.
-19. `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Data\` is untouchable local game-data state. Do not copy files into it, delete from it, rewrite files under it, or treat it as a disposable sandbox unless the user explicitly overrides this rule in the current conversation.
-20. Any agent that believes it needs to change “game installation” Data content must implement that change as an MO2 mod overlay instead: create a dedicated subfolder under `D:\awesome-bgs-mod-master\.artifacts\mo2\mods\<mod-name>\...`, place the intended Data changes there, and let MO2 VFS project them into the runtime view. Do not mutate `Stock Game\Fallout 4\Data` directly.
+18. For local runtime verification of automation commands, do not launch an arbitrary xEdit instance directly from the repo or from a random Fallout 4 installation. Use the portable MO2 instance rooted at `B:\WastelandBlues 2.0` and its broker-backed launcher client so xEdit runs under the intended Fallout 4 VFS and profile.
+19. `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data\` is untouchable local game-data state. Do not copy files into it, delete from it, rewrite files under it, or treat it as a disposable sandbox unless the user explicitly overrides this rule in the current conversation.
+20. Any agent that believes it needs to change “game installation” Data content must implement that change as an MO2 mod overlay instead: create a dedicated subfolder under `B:\WastelandBlues 2.0\mods\<mod-name>\...`, place the intended Data changes there, and let MO2 VFS project them into the runtime view. Do not mutate `Stock Game\Fallout 4\Data` directly.
 21. When a harness or helper needs writable plugin fixtures, generated files, config overrides, or game-data substitutions, create them in a dedicated MO2 mod folder (or another non-Data runtime root the user explicitly approved), not under `Stock Game\Fallout 4\Data`.
-22. For this FO4 MO2-backed workstream, after a trusted LiteDebug build, syncing the fresh executable into `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Tools\OpenCodeXEdit\xEdit.exe` is explicitly allowed. This tool-directory sync is the narrow exception to the Stock Game write caution; it does not permit any writes under `Stock Game\Fallout 4\Data`.
-23. Phase 6 runtime verification must treat `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Tools\OpenCodeXEdit\xEdit.exe` as the canonical xEdit target for the MO2-managed `OpenCodeXEdit` tool path. Do not use `D:\TES5Edit-contrib\Build\xEdit.exe` as an acceptable runtime target for this FO4 MO2-backed verification path, because that bypass reintroduced harness drift.
-24. Treat these as the two valid MO2 entrypoints for xEdit automation on this machine:
-    - the fixed configured executable `OpenCode xEdit Automation Serve`
-    - the programmable MO2 bootstrap path `ModOrganizer.exe -p Default run -e OpenCodeVfsLauncher -a "..."`
-25. Do not bypass the MO2 bootstrap entry by running `mo2-vfs-launcher.ps1` or `mo2-vfs-launcher.cmd` directly from the host shell and assuming that VFS/profile activation will be equivalent. The helper is the execution body behind the MO2 entry, not a standalone substitute for MO2 activation.
-26. When you need the fixed xEdit automation harness, prefer the configured `OpenCode xEdit Automation Serve` executable. When you need a programmable target, dynamic arguments, or a per-run state file, use `ModOrganizer.exe -p Default run -e OpenCodeVfsLauncher -a "..."`.
-27. If you use the `OpenCodeVfsLauncher` path, treat it as a real MO2 entrypoint, not as a direct helper invocation. Preserve the known-good argument pattern: pass target information through MO2's `-a` string and let MO2 launch the configured `OpenCodeVfsLauncher` executable under the selected profile.
-28. If a non-UI recovery path needs the underlying `D:\awesome-bgs-mod-master\tools\mo2-vfs-launcher\mo2-vfs-launcher.cmd` or `.ps1` helper for debugging, do not improvise its option contract. In particular, `--wait-mode none` is invalid for that helper; background daemon launches should use `--wait-mode spawned`, while `--stdout-file` and `--stderr-file` are only valid with `--wait-mode=exit`.
-29. Under the OpenCode shell on Windows, do not launch long-lived GUI or background processes with raw executable invocation such as `& ModOrganizer.exe ...` or `& xEdit.exe ...`. Even if the child process starts correctly, inherited console/stdio handles can leave the shell command looking hung. Use `Start-Process` for MO2, xEdit, and similar GUI/background launches that should outlive the shell command.
+22. For this FO4 MO2-backed workstream, after a trusted LiteDebug build, syncing the fresh executable into `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe` is explicitly allowed. This tool-directory sync is the narrow exception to the Stock Game write caution; it does not permit any writes under `Stock Game\Fallout 4\Data`.
+23. Runtime verification must treat `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe` as the canonical xEdit target. Do not use `D:\TES5Edit-contrib\Build\xEdit.exe` as the runtime target, because that bypass reintroduces harness drift.
+24. The canonical entrypoint is `D:\awesome-bgs-mod-master\tools\mo2-vfs-launcher\xedit-client.ps1 process launch`. The WastelandBlues MO2 GUI must already be running; the client delegates to the Mo2AgentControl `launch.start` broker inside that GUI.
+25. Do not use MO2 CLI `run` mode for this instance lineage. It crashes and was never the surviving harness client's launch path. Do not substitute a raw `ModOrganizer.exe ... run -e ...` command for the broker client.
+26. Preserve the canonical launch contract exactly: `--launcher-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe" --game-mode Fallout4 --mo2-root "B:\WastelandBlues 2.0" --mo-profile Default [--plugins-file <fixture.txt>] --data-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data" --i-know-what-im-doing 1`.
+27. The client auto-appends `-automation-serve` and the session `-P:` plugins file. `--data-path` must end at `\Data`; the client supplies the trailing backslash. Use `--plugins-file` for an artifact-local fixture load order; otherwise the selected profile's load order is used.
+28. Stop with `xedit-client.ps1 process stop --xedit-pid <pid>` and issue requests with `xedit-client.ps1 automation call ...`. `$env:BGS_MO2_ROOT` may override the MO2 root, but it is currently unset and the explicit `--mo2-root` remains canonical.
+29. The first xEdit run after an executable swap may spend minutes rebuilding cache. Treat that as expected startup cost, not as proof of a containment breach.
 30. Before claiming broad automation command coverage, dispatch `@explorer` for a read-only boundary/use-test matrix over the affected command surface. Treat the explorer result as planning only, not execution evidence.
 31. When the runtime verification work is bounded, mechanical, and already specified (fixed harness, known command shape, known artifact directory, and machine-checkable pass/fail criteria), dispatch `@laborer` to execute it and collect request/response artifacts under `.opencode/artifacts/<task>/...`. The orchestrator owns routing, constraints, light summary verification, and final claims; it should not spend high-cost attention on deterministic verification loops.
 32. Do not send `@laborer` into unclear harness design, new debugging, architectural judgment, or failing-runtime diagnosis. If the verification path is ambiguous or failures require root-cause analysis, keep control in the orchestrator and use `@oracle` for review/debugging guidance when needed.
@@ -100,15 +98,19 @@ The dproj `<Platform Condition>` default selects Win32 vs Win64. For symmetric r
 2. Edit dproj default to Win64, build, preserve evidence.
 3. Restore dproj default to Win32, matching the FO4 harness steady state.
 
-### MO2 Multi-Instance
+### MO2 Broker Launch
 
-When another MO2 instance (e.g. Starfield MO2) may be open, FO4 MO2 launch must use `--multiple`:
+Keep the WastelandBlues MO2 GUI running and launch xEdit through its in-GUI Mo2AgentControl broker. The canonical client call is:
 
 ```powershell
-ModOrganizer.exe --multiple -p Default run -e <executable> -a "<args>"
+pwsh -NoProfile -File D:\awesome-bgs-mod-master\tools\mo2-vfs-launcher\xedit-client.ps1 process launch `
+  --launcher-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe" `
+  --game-mode Fallout4 --mo2-root "B:\WastelandBlues 2.0" --mo-profile Default `
+  [--plugins-file <fixture.txt>] --data-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data" `
+  --i-know-what-im-doing 1
 ```
 
-`--multiple` MUST appear before the `run` subcommand. It bypasses MO2's global QSharedMemory single-instance lock (`mo-43d1a3ad-eeb0-4818-97c9-eda5216c29b5` per `ModOrganizer2/src/multiprocess.cpp:7`). Operational rule: while both instances run, the FO4 MO2 must be the only one spawning child executables until the phase work completes.
+The old portable-harness `ModOrganizer.exe ... run -e ...` path is historical and is not valid for the WastelandBlues lineage. Do not kill another MO2 instance or improvise around the old global single-instance lock; the broker-backed client is the supported launch boundary.
 
 ### Daemon Shutdown
 
@@ -138,11 +140,9 @@ If a `bds.exe -b` run fails or the redirected stderr/stdout logs are suspiciousl
 
 For local runtime verification after the build succeeds, use this harness sequence:
 
-1. do not write to `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Data\...`; if a runtime change would affect game Data, package it as an MO2 mod overlay under `D:\awesome-bgs-mod-master\.artifacts\mo2\mods\<mod-name>\...`
-2. after a trusted LiteDebug build, sync the fresh executable into `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Tools\OpenCodeXEdit\xEdit.exe`; this MO2 tool path is the canonical Phase 6 runtime xEdit target, and `D:\TES5Edit-contrib\Build\xEdit.exe` is not an acceptable runtime target for this FO4 MO2-backed verification path
-3. launch through MO2 using either:
-   - the fixed executable `OpenCode xEdit Automation Serve`, or
-   - `ModOrganizer.exe -p Default run -e OpenCodeVfsLauncher -a "..."` when a programmable child launch is needed, with writable fixture/data roots kept outside `Stock Game\Fallout 4\Data`
+1. do not write to `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data\...`; if a runtime change would affect game Data, package it as an MO2 mod overlay under `B:\WastelandBlues 2.0\mods\<mod-name>\...`
+2. after a trusted LiteDebug build, sync the fresh executable into `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe`; `D:\TES5Edit-contrib\Build\xEdit.exe` is not an acceptable runtime target for this FO4 MO2-backed verification path
+3. with the WastelandBlues MO2 GUI running, call `xedit-client.ps1 process launch` with the canonical launcher, game mode, MO2 root/profile, explicit Data path, mutation-consent flag, and optional artifact-local plugins file shown above
 4. send automation requests against that MO2-backed daemon session
 5. when coverage is broad or edge-heavy, first use `@explorer` only to map the missing boundary/use cases
 6. if the execution path is fixed and the expected checks are machine-readable, dispatch `@laborer` to run the known verification harness and preserve artifacts; the orchestrator then reads the summary and makes the final claim
@@ -150,35 +150,28 @@ For local runtime verification after the build succeeds, use this harness sequen
 
 This avoids drifting onto the wrong xEdit instance, the wrong Fallout 4 install, or a noisy load order.
 
-If you use `OpenCodeVfsLauncher`, remember:
+For the broker client, remember:
 
-1. enter through MO2: `ModOrganizer.exe -p Default run -e OpenCodeVfsLauncher -a "..."`
-2. pass the actual xEdit target and args inside MO2's `-a` string
-3. use the historical known-good pattern for automation serve launches:
-   - `--target-path <xEdit.exe>`
-   - `--target-arg -FO4`
-   - `--target-arg -automation-serve`
-   - `--session-id <id>`
-   - `--state-file <path>`
-   - `--wait-mode spawned`
-   - `--transport-mode direct-child`
+1. the WastelandBlues MO2 GUI is a prerequisite; the client does not replace it
+2. `process launch` delegates to the Mo2AgentControl `launch.start` broker and auto-appends `-automation-serve` plus the session `-P:` file
+3. `--data-path` is mandatory because registry discovery would select Steam Data
+4. `--plugins-file` is optional; without it, the selected profile's full load order is used
+5. `process stop --xedit-pid <pid>` and `automation call ...` are the lifecycle and request surfaces
 
-If you debug the underlying helper itself, remember:
-
-1. direct host-shell invocation is not equivalent to MO2 entrypoint activation
-2. `--wait-mode none` is invalid
-3. do not pass `--stdout-file` or `--stderr-file` with `--wait-mode spawned`
-
-For MO2 and other GUI/background launches from the shell, prefer patterns like:
+Use this launch shape:
 
 ```powershell
-Start-Process 'D:\awesome-bgs-mod-master\.artifacts\mo2\ModOrganizer.exe' -ArgumentList @('-p', 'Default', 'run', '-e', 'OpenCode xEdit Automation Serve')
+pwsh -NoProfile -File D:\awesome-bgs-mod-master\tools\mo2-vfs-launcher\xedit-client.ps1 process launch `
+  --launcher-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Tools\FO4Edit\FO4Edit.exe" `
+  --game-mode Fallout4 --mo2-root "B:\WastelandBlues 2.0" --mo-profile Default `
+  [--plugins-file <fixture.txt>] --data-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data" `
+  --i-know-what-im-doing 1
 ```
 
 Avoid patterns like:
 
 ```powershell
-& 'D:\awesome-bgs-mod-master\.artifacts\mo2\ModOrganizer.exe' -p Default run -e 'OpenCode xEdit Automation Serve'
+# Do not invoke WastelandBlues through ModOrganizer.exe CLI run mode.
 ```
 
 When updating `ROADMAP.md` after implementation, include:
@@ -248,12 +241,11 @@ If `probe.ps1` becomes a real project tool, move it into a tracked location such
 - Assuming `Release` is a trustworthy verification config for this repo on this machine.
 - Hitting a build failure or empty redirected log and then trying alternate build commands before opening `xEdit.err`.
 - Launching runtime verification against an arbitrary local `xEdit.exe` instead of the MO2-managed harness.
-- Touching or treating `D:\awesome-bgs-mod-master\.artifacts\mo2\Stock Game\Fallout 4\Data\...` as disposable workspace state after the user explicitly restored it and forbade Data mutation.
+- Touching or treating `B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data\...` as disposable workspace state after the user explicitly forbade Data mutation.
 - Applying a game-local change directly to the game tree instead of packaging it as a dedicated MO2 mod folder and letting VFS project it.
-- Bypassing MO2 and invoking `mo2-vfs-launcher.ps1/cmd` directly from the host shell while assuming it should activate the same VFS/profile state as `ModOrganizer.exe -p Default run -e OpenCodeVfsLauncher -a "..."`.
-- Using `mo2-vfs-launcher` with `--wait-mode none`, which the helper does not support.
-- Combining `--wait-mode spawned` with `--stdout-file` / `--stderr-file`, which the helper rejects.
-- Starting MO2 or other long-lived GUI/background processes with raw `& exe ...` shell invocation instead of `Start-Process` and then treating the resulting shell hang as an xEdit or MO2 blocker.
+- Using MO2 CLI `run` mode instead of the broker-backed `xedit-client.ps1 process launch` path.
+- Omitting the explicit WastelandBlues Data path and allowing registry discovery to select Steam Data.
+- Forgetting that the WastelandBlues MO2 GUI must already be running before the broker client can launch xEdit.
 - Saying `@explorer` ran xEdit CLI tests. `@explorer` is read-only planning/recon; runtime execution needs `@laborer` for bounded known-method chores or the orchestrator for unclear cases, plus preserved artifacts.
 - Keeping fixed, deterministic runtime-verification loops in the main orchestrator after `@laborer` has enough context to run the harness safely.
 - Sending `@laborer` to invent a new harness, debug a failing daemon, or make architecture decisions instead of using it for bounded execution.
@@ -281,9 +273,9 @@ If `probe.ps1` becomes a real project tool, move it into a tracked location such
 | "The redirected log was empty, so I should try random build commands until one prints something." | No. First inspect `D:\TES5Edit-contrib\xEdit.err`; on this machine it is often the actual compiler transcript and the fastest route to the real blocker. |
 | "Release built cleanly, so we're done." | Not on this machine for this repo. `Release` is a known false-build path; use `LiteDebug` for real verification unless the user changes the rule. |
 | "Any xEdit instance is fine for runtime checks." | Not in this repo. Runtime verification must use the MO2-managed harness so the binary, VFS, profile, and Fallout 4 target all stay correct. |
-| "I'll just use `mo2-vfs-launcher.cmd --wait-mode none` for a background serve." | That helper does not support `none`. Use `--wait-mode spawned`, and only pair stdout/stderr capture with `--wait-mode=exit`. |
-| "`mo2-vfs-launcher.ps1` is the same thing as the MO2 entrypoint, so I can run it directly." | No. `ModOrganizer.exe ... run -e OpenCodeVfsLauncher` is the MO2 bootstrap entry; `mo2-vfs-launcher.ps1/cmd` is the implementation behind that entry after MO2 has already activated the session. |
-| "The command printed output, so the shell isn't really hung." | On Windows GUI launches, child processes can inherit console/stdio handles and keep the shell session looking busy. Use `Start-Process` instead of raw `& exe ...` for detached launches. |
+| "MO2 CLI `run` worked for the old portable harness, so it is still canonical." | No. The WastelandBlues lineage crashes on CLI `run`; use the surviving `xedit-client.ps1` broker path with the MO2 GUI already running. |
+| "The registry can find Fallout 4 Data for me." | It resolves the Steam installation, not the WastelandBlues Stock Game. Pass `--data-path "B:\WastelandBlues 2.0\Stock Game\Fallout 4\Data"` explicitly. |
+| "The client should start MO2 if needed." | It does not. The client delegates to the broker inside the running WastelandBlues MO2 GUI. |
 | "The explorer found the missing cases, so coverage is verified." | Explorer output is a test matrix, not execution evidence. Dispatch `@laborer` for bounded known-method execution or run the MO2-backed CLI calls yourself, then save request/response artifacts before claiming coverage. |
 | "The orchestrator owns verification, so it must personally run every CLI call." | The orchestrator owns routing and final claims. For fixed harnesses with clear pass/fail checks, `@laborer` should execute the mechanical loop and the orchestrator should verify the summary. |
 | "Laborer can handle runtime verification, so it can design/debug the harness too." | No. `@laborer` is for bounded execution. Harness design, ambiguous failures, and root-cause analysis stay with the orchestrator/`@oracle`. |
@@ -307,12 +299,10 @@ If `probe.ps1` becomes a real project tool, move it into a tracked location such
 - Encountering a failed or ambiguous `bds.exe -b` run and not opening `xEdit.err` before trying alternate build commands
 - Using `Release` as the verification config for this repo on this machine after it was established as a false-build path
 - Launching runtime verification outside the MO2-managed harness entrypoints
-- Running Phase 6 runtime verification before syncing the fresh repo binary into the MO2-managed `OpenCodeXEdit` tool directory
-- Using `D:\TES5Edit-contrib\Build\xEdit.exe` as the runtime target for the FO4 MO2-backed Phase 6 verification path instead of the canonical MO2-managed `OpenCodeXEdit` tool executable
-- Launching a background MO2 VFS session with an unsupported helper wait mode
-- Pairing `--wait-mode spawned` with unsupported stdout/stderr capture flags on the MO2 VFS helper
-- Running the `mo2-vfs-launcher` helper directly from the host shell while calling it a MO2/VFS launch
-- Launching `ModOrganizer.exe`, `xEdit.exe`, or similar GUI/background processes with raw `& exe ...` invocation under the shell when a detached `Start-Process` launch is intended
+- Running runtime verification before syncing the fresh repo binary into the canonical `FO4Edit\FO4Edit.exe` tool target
+- Using `D:\TES5Edit-contrib\Build\xEdit.exe` as the runtime target instead of the canonical WastelandBlues `FO4Edit.exe`
+- Launching through MO2 CLI `run` mode instead of the Mo2AgentControl broker client
+- Omitting `--data-path`, `--mo2-root`, or the running-MO2-GUI prerequisite from the canonical client launch
 - Claiming broad automation coverage from `@explorer` output without `@laborer`-run or orchestrator-run CLI/named-pipe artifacts and a main-session summary check
 - Using the expensive orchestrator for fixed, repetitive runtime-verification execution when `@laborer` has a precise harness, artifact path, and pass/fail criteria
 - Delegating unclear runtime failures or harness design to `@laborer` instead of escalating to orchestrator/`@oracle`
