@@ -1111,7 +1111,7 @@ begin
   Result :=
     wbStruct(aName, [
       wbInteger('Data Type', itS32, wbREFLStringToStr, wbREFLStringToInt).SetDefaultEditValue('UInt32'),
-      wbUnknown(8)
+      wbByteArray('Reserved', 8)
     ]);
 end;
 
@@ -4437,7 +4437,7 @@ begin
          {12} wbByteArray('Unknown', 4, cpIgnore),
          {13} wbByteArray('Unknown', 4),
          {14} wbInteger('Ref Collection Alias', itS32, wbPackageLocationAliasToStr, wbAliasToInt),
-         {15} wbUnknown(4),
+         {15} wbInteger('Reserved', itU32),
          {16} wbFormIDCkNoReach('Keyword', [KYWD])
         ]),
         wbFloat('Radius'),
@@ -4728,7 +4728,7 @@ begin
             wbFloat('X'),
             wbFloat('Y'),
             wbFloat('Z'),
-            wbUnknown(4)
+            wbByteArray('Reserved', 4)
           ]).SetToStr(wbVec3ToStr).IncludeFlag(dfCollapsed, wbCollapseVec3),
         -1).IncludeFlag(dfNotAlignable)
       ),
@@ -4835,8 +4835,8 @@ begin
           wbNavmeshGridCounter).IncludeFlag(dfNotAlignable)
         )
       ]),
-      wbUnknown(2),
-      wbUnknown(2)
+      wbInteger('Reserved', itU16),
+      wbInteger('Reserved', itU16)
     ]);
 
   var wbHeadtracking := wbRStruct('Head Tracking', [
@@ -5863,7 +5863,7 @@ begin
     wbFormIDCk(ATAC, 'Action', [NULL, AACT]).SetRequired,               //ATAC  uint32 // +0x48  probably formid
     wbEmpty(SHRT, 'Use Actor Anim Action'),                             //SHRT  none // sets +0x5F to 1 (uint8/bool)
     wbEmpty(PLRL, 'Animation Hold Event'),                              //PLRL  none // sets +0x5D to 1 (uint8/bool)
-    wbUnknown(DTGT, 4),                                                 //DTGT  uint32 // +0x54 //does not occur in Starfield.esm
+    wbInteger(DTGT, 'Reserved', itU32),
     wbEmpty(ACEP, 'Unknown'),                                           //ACEP  none // sets +0x5E to 1 (uint8/bool) //does not occur in Starfield.esm
     wbMarkerReq(XNAM)                                                   //XNAM  end marker for BNAM fields
   ]);
@@ -6092,7 +6092,7 @@ begin
   end;
 
   var wbTraversalData := wbStruct('Traversal', [
-    wbUnknown(4),
+    wbInteger('Reserved', itU32),
     wbVec3('From'),
     wbVec3('To'),
     wbVec3,
@@ -6462,8 +6462,8 @@ begin
         {2} wbStruct('Surface Tree Pattern Swap', [
               wbArray('Forms', wbStruct('Form', [
                 wbFormIDCk('Surface Pattern', [SFPT]),
-                wbUnknown(1),
-                wbUnknown(4) // present on all array entries except last - is usually an index to the pattern array, sometimes with an offset adjustment
+                wbInteger('Pattern Flag', itU8),
+                wbInteger('Pattern Index', itU32)
               ], cpNormal, False, nil, 2), -1)
             ]),
             //BGSBlockEditorMetaData_Component
@@ -6477,8 +6477,8 @@ begin
               wbLenString('Source Editor ID'),
               wbArray('Unknown', wbStruct('Unknown', [
 //                wbFormIDCk('Source Block', [SFBK]),
-                wbUnknown(4), // Appears to usually point at the same FormID of the source block. Though sometimes a random REFR or a broken ID. Inconsistent, but it's a read only reference data point not used in gameplay.
-                wbUnknown(1)
+                wbInteger('Source Block Reference', itU32),
+                wbInteger('Source Block Flag', itU8)
               ]), -1).IncludeFlag(dfNotAlignable),
 
               wbInteger('Location X', itS32),
@@ -6808,7 +6808,7 @@ begin
         ]),
         //BGSPlanetContentManagerContentProperties_Component
         wbRStruct('Component Data - Planet Content Manager Content Properties', [
-          wbUnknown(ZNAM, 4), // presume this is the Days Until Reset manual value but CK doesn't save when putting one in
+          wbInteger(ZNAM, 'Days Until Reset', itU32),
           wbInteger(YNAM, 'Do All Before Repeating', itU8, wbBoolEnum),
           wbInteger(XNAM, 'Number of Times Allowed (Global)', itU32),
           wbInteger(WNAM, 'Number of Times Allowed (per system)', itU32),
@@ -8063,7 +8063,7 @@ begin
         wbFormIDCk(XLRL, 'Location Reference', [LCTN], False, cpBenignIfAdded),
         wbXSCL,
         wbDataPosRot,
-        wbUnknown(XLTW),
+        wbFormIDCk(XLTW, 'Water', [REFR, ACHR]),
         wbString(MNAM, 'Comments')
       ], True).SetAddInfo(wbPlacedAddInfo);
     end;
@@ -8261,7 +8261,7 @@ begin
     wbICON,
     wbPRPS,
     wbStruct(DATA, 'Data', [
-      wbUnknown(4)
+      wbFloat('Bleedout Default')
     ])
   ]);
 
@@ -8350,7 +8350,7 @@ begin
     wbBaseFormComponents,
     wbFULL,
     wbGenericModel(True),
-    wbUnknown(XFLG),
+    wbInteger(XFLG, 'Model Flags', itU8, wbModelFlags).IncludeFlag(dfCollapsed, wbCollapseFlags),
     wbContainerItems,
     wbDEST,
     wbInteger(DATA, 'Flags', itU8, wbFlags([
@@ -8409,7 +8409,7 @@ begin
         wbFloat('Persue', cpNormal, True, 1, -1, nil, wbCSTYNormalizeFloat600),
         wbFloat('Disengage', cpNormal, True, 1, -1, nil, wbCSTYNormalizeFloat600),
         wbFloat('Surround', cpNormal, True, 1, -1, nil, wbCSTYNormalizeFloat600),
-        wbUnknown(4),
+        wbFloat('Maneuver Timing'),
         wbFloat('Break Stalemate', cpNormal, True, 1, -1, nil, wbCSTYNormalizeFloat600)
       ]);
     end;
@@ -8572,7 +8572,7 @@ begin
       {0x40} 'Use Group Cohesion',
       {0x80} 'Maintain Attack From Cover Until Suppressed'
     ]), cpNormal, True).IncludeFlag(dfCollapsed, wbCollapseFlags),
-    wbUnknown(FNAM),
+    wbFormIDCk(FNAM, 'Template Combat Style', [CSTY]),
     wbFormIDCk(TNAM, 'Template Default Combat Style', [CSTY]),
     wbStruct(UNAM, 'Templates', [
       wbFormIDCk('Offsensive Defensive Mults', [NULL, CSTY]),
@@ -9279,7 +9279,7 @@ begin
     wbByteRGBA(CNAM).SetRequired,
     wbString(DNAM, 'Notes'),
     wbInteger(TNAM, 'Type', itU32, wbKeywordTypeEnum, cpNormal, True),
-    wbUnknown(FNAM).SetRequired, // always present, no UI element in CK, and always written as zeros
+    wbInteger(FNAM, 'Reserved', itU32).SetRequired,
     wbFormIDCk(DATA, 'Attraction Rule', [AORU]),
     wbString(ENAM, 'Flash Linkage Name'),
     wbFULL
@@ -9337,7 +9337,7 @@ begin
     wbByteRGBA(CNAM),
     wbString(DNAM, 'Notes'),
     wbInteger(TNAM, 'Type', itU32, wbKeywordTypeEnum),
-    wbUnknown(FNAM),
+    wbInteger(FNAM, 'Reserved', itU32),
     wbFULL,
     wbFormIDCk(DATA, 'AttractionRule', [NULL, AORU]),
     wbString(ENAM, 'Flash Linkage Name')
@@ -9368,7 +9368,7 @@ begin
     wbByteRGBA(CNAM),
     wbString(DNAM, 'Notes'),
     wbInteger(TNAM, 'Type', itU32, wbKeywordTypeEnum),
-    wbUnknown(FNAM),
+    wbInteger(FNAM, 'Reserved', itU32),
     wbFULL,
     wbFormIDCk(DATA, 'AttractionRule', [NULL, AORU]),
     wbString(ENAM, 'Flash Linkage Name')
@@ -9860,7 +9860,7 @@ begin
         ]).SetSummaryKey([1, 2])
           .IncludeFlag(dfCollapsed, wbCollapseNavmesh)
           .IncludeFlag(dfSummaryMembersNoName, wbCollapseNavmesh),
-        wbUnknown(1),
+        wbInteger('Pathing Flag', itU8),
         wbArray('Unknown', wbInteger('Type', itU32, wbCRCValuesEnum), -1)
       ]).SetSummaryKeyOnValue([0, 9, 7, 8])
         .SetSummaryPrefixSuffixOnValue(0, '', '')
@@ -10561,7 +10561,7 @@ begin
         wbFormIDCk('World/Cell', [WRLD, CELL], False, cpBenign),
         wbInteger('Grid Y', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
         wbInteger('Grid X', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
-        wbUnknown(4, cpBenign)
+        wbInteger('Optional Reference', itU32, nil, cpBenign)
       ], cpBenign),
     0, cpBenign),
     wbArrayS(LCPR, 'Master Persist Location References',
@@ -10570,7 +10570,7 @@ begin
         wbFormIDCk('World/Cell', [WRLD, CELL], False, cpBenign),
         wbInteger('Grid Y', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
         wbInteger('Grid X', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
-        wbUnknown(4, cpBenign)
+        wbInteger('Optional Reference', itU32, nil, cpBenign)
       ], cpBenign),
     0, cpBenign),
     wbArrayS(RCPR, 'Removed Persist Location References',
@@ -10617,7 +10617,7 @@ begin
         wbFormIDCk('World/Cell', [WRLD, CELL], False, cpBenign),
         wbInteger('Grid Y', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
         wbInteger('Grid X', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
-        wbUnknown(4, cpBenign)
+        wbInteger('Optional Reference', itU32, nil, cpBenign)
       ], cpBenign),
     0, cpBenign),
     wbArrayS(LCSR, 'Master Special References',
@@ -10627,7 +10627,7 @@ begin
         wbFormIDCk('World/Cell', [WRLD, CELL], False, cpBenign),
         wbInteger('Grid Y', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
         wbInteger('Grid X', itS16, nil, cpBenign).SetDontShow(wbLCTNCellDontShow),
-        wbUnknown(4, cpBenign)
+        wbInteger('Optional Reference', itU32, nil, cpBenign)
       ], cpBenign),
     0, cpBenign),
     wbArrayS(RCSR, 'Removed Special References',
@@ -11258,7 +11258,7 @@ begin
       wbFloat('High Far Scale'),
       wbFloat('Far Height Mid'),
       wbFloat('Far Height Range'),
-      wbUnknown(4)
+      wbByteArray('Reserved Fog Data', 4)
     ], cpNormal, True, nil, 15),
     wbAmbientColors(DALC)
   ]);
@@ -11675,7 +11675,7 @@ begin
                   wbFormIDCk(PASP, 'Start Scene', [SCEN,NULL]),                    //PASP  uint32 // +0x88 array; repeated; stored in item+0x28
                   wbInteger(PAPI, 'Phase Index', itU32),                            //PAPI  uint32 // +0x88 array; repeated; stored in item+0x20; some sort of parenting/hierarchy index with the items in the array
                   wbString(PAPN, 'Phase Name'),
-                  wbUnknown(PAQO)                                                   //PAQO  uint32 // Seems to get set if a NPC dialogue subtype is present and the 'Only Parent Quest Scenes' box is unchecked. But has 4 bytes of zero.
+                  wbInteger(PAQO, 'NPC Dialogue Subtype', itU32)
                 ]),
                 wbFormIDCk(ESCS, 'NPC Response', [DIAL,NULL]).SetRequired          //ESCS  uint32 // +0x88 array; repeated; each item is 0x30 bytes; stored in item+0x08; increases +0x88 index *after* storing the value, likely acts as end marker for an item in this array
               ]),
@@ -11859,7 +11859,7 @@ begin
       ])),
     wbFormIDCk(PNAM, 'Parent Quest', [QUST]).SetRequired,
     wbInteger(INAM, 'Last Action Index', itU32),
-    wbUnknown(VNAM),
+    wbInteger(VNAM, 'Unknown', itU32),
     wbConditions,
     wbStruct(SCQS, 'Set Parent Quest Stage', [
       wbInteger('On Begin', itS16),
@@ -12276,7 +12276,7 @@ begin
       .SetAfterSet(wbDialogueTextAfterSet),
     wbFormIDCk(ANAM, 'Speaker', [NPC_]),
     wbFormIDCk(TSCE, 'Start Scene', [SCEN]),
-    wbUnknown(INTV),
+    wbInteger(INTV, 'Version', itU32),
     wbSoundReference(WED0),
     wbStruct(TIQS, 'Set Parent Quest Stage', [
       wbInteger('On Begin', itU16),
@@ -12887,7 +12887,7 @@ begin
         {0x80000000}  'Unknown 32'
       ])).IncludeFlag(dfCollapsed, wbCollapseFlags),
       wbInteger('Minimum Skill Level', itU32),
-      {114} wbUnknown(2), // unused Counter Effect count?
+      wbInteger('Counter Effect Count', itU16),
       {116} wbFloat('Second AV Weight'),
       {120} wbFloat('Skill Usage Multiplier'),
       {124} wbFloat('Taper Curve'),
@@ -13400,7 +13400,7 @@ begin
 //    wbFormIDCk(BCLF, 'Facial Hair Color', [CLFM], False, cpNormal, False),
     wbFormIDCk(ZNAM, 'Combat Style', [CSTY], False, cpNormal, False),
 //    wbFormIDCk(GNAM, 'Gift Filter', [FLST], False, cpNormal, False),
-    wbUnknown(NAM5, cpNormal, True),
+    wbInteger(NAM5, 'Gift Filter', itU32, nil, cpNormal, True),
     wbFloat(NAM6, 'Height Min', cpNormal, True),
 //    wbFloat(NAM7, 'Unused', cpNormal, True),
     wbFloat(NAM4, 'Height Max'),
@@ -14069,9 +14069,9 @@ begin
               wbLString(MPPN, 'Name', 0, cpTranslate),
               wbString(MPPM, 'Unknown'),
               wbFormIDCk(MPPT, 'Texture', [TXST]),
-              wbUnknown(MPPF)
+              wbInteger(MPPF, 'Unknown', itU32)
             ])).SetCountPath(MPPC),
-          wbUnknown(MPPK),
+          wbInteger(MPPK, 'Unknown', itU32),
           wbArray(MPGS, 'Unknown', wbInteger('Index', itU32, wbIntToHexStr, wbHexStrToInt))
           }
         ])
@@ -14639,7 +14639,7 @@ begin
     wbRStructSK([0], 'Collection Alias', [
       wbInteger(ALCS, 'Collection Alias ID', itU32),
       wbInteger(ALMI, 'Max Initial Fill Count', itU8).SetRequired,
-      wbUnknown(ALAM, 4),
+      wbInteger(ALAM, 'Reserved', itU32),
       wbRUnion('Reference Alias or Alias End Marker', [
         wbRStruct('Alias End Marker', [
           wbEmpty(ALED, 'Alias End Marker', cpNormal, True)
@@ -14833,12 +14833,12 @@ begin
 
   var wbRACEDAT2UnknownStruct :=
     wbStruct('Unknown', [
-      wbUnknown(1),
+      wbInteger('Reserved', itU8),
       wbFloat,
       wbFloat,
       wbFloat,
       wbFloat,
-      wbUnknown(4),
+      wbInteger('Reserved', itU32),
       wbFloat,
       wbFloat
     ]);
@@ -14888,15 +14888,15 @@ begin
       { 80} wbFloat('Flight Radius'),                                           // +0x14
       { 84} wbFloat('Angular Acceleration Rate'),                               // +0x0C
       { 88} wbFloat('Angular Tolerance'),                                       // +0x10
-      { 92} wbUnknown(4),                                                       // +0xA0
-      { 96} wbUnknown(4),                                                       // +0xA4
-      {100} wbUnknown(4),                                                       // +0xA8
-      {104} wbUnknown(4),                                                       // +0xAC
-      {108} wbUnknown(4),                                                       // +0xB0
-      {112} wbUnknown(4),                                                       // +0xB4
-      {116} wbUnknown(4),                                                       // +0xB8
-      {120} wbFloat,                                                            // +0xBC
-      {124} wbUnknown(4),                                                       // +0xC0
+      wbFloat('Movement Parameter'),
+      wbFloat('Movement Parameter'),
+      wbFloat('Movement Parameter'),
+      wbInteger('Biped Object Slot 1', itS32, wbBipedObjectEnum),
+      wbInteger('Biped Object Slot 2', itS32, wbBipedObjectEnum),
+      wbFloat('Tolerance Parameter'),
+      wbInteger('Flag/Count', itU32),
+      wbInteger('Flag/Count 2', itU32),
+      wbInteger('Unset Sentinel', itS32),
       {128} wbInteger('Pipboy Biped Object', itS32, wbBipedObjectEnum),         // +0xC4
       {132} wbInteger('XP Value', itS16),                                       // +0xC8
             wbStruct('OnCripple', [
@@ -14986,12 +14986,12 @@ begin
       wbRStruct('Male Body Data', [
         wbMarkerReq(MNAM, cpIgnore),
         wbInteger(INDX, 'Unknown', itU32).SetDefaultNativeValue(0).SetRequired,
-        wbUnknown(FLLD, 4).SetDefaultEditValue('01 00 00 00').SetRequired
+        wbInteger(FLLD, 'Body Data Flag', itU32, wbBoolEnum).SetDefaultNativeValue(1)
       ], [], cpIgnore, True),
       wbRStruct('Female', [
         wbMarkerReq(FNAM, cpIgnore),
         wbInteger(INDX, 'Unknown', itU32).SetDefaultNativeValue(0).SetRequired,
-        wbUnknown(FLLD, 4).SetDefaultEditValue('01 00 00 00').SetRequired
+        wbInteger(FLLD, 'Body Data Flag', itU32, wbBoolEnum).SetDefaultNativeValue(1)
       ], [], cpIgnore, True)
     ], [], cpIgnore, True).IncludeFlag(dfCollapsed, wbCollapseOther),
 
@@ -15034,7 +15034,7 @@ begin
         wbMarkerReq(MNAM),
         wbRStruct('Chargen', [
           wbMarkerReq(NAM0),
-          wbUnknown(NNAM, 12),
+          wbByteArray(NNAM, 'Chargen Hash', 12),
           wbRArray('Race Presets', wbFormIDCk(RPRM, 'Preset NPC', [NPC_, NULL])),
           wbMorphGroups('Morph Groups'),
           wbFaceMorphs('Face Morph Phenotypes'),
@@ -15053,7 +15053,7 @@ begin
         wbMarkerReq(FNAM),
         wbRStruct('Chargen', [
           wbMarkerReq(NAM0),
-          wbUnknown(NNAM, 12),
+          wbByteArray(NNAM, 'Chargen Hash', 12),
           wbRArray('Race Presets', wbFormIDCk(RPRF, 'Preset NPC', [NPC_, NULL])),
           wbMorphGroups('Morph Groups'),
           wbFaceMorphs('Face Morph Phenotypes'),
@@ -15201,7 +15201,7 @@ begin
       wbFormIDCk(HNAM, 'Unknown', [REFR]),
       wbInteger(INAM, 'Unknown', itU16, wbBoolEnum).SetRequired,
       wbFormIDCk(JNAM, 'Unknown', [PKIN]),
-      wbUnknown(LNAM, 4).SetRequired,
+      wbInteger(LNAM, 'Reserved', itU32).SetRequired,
       wbEmpty(XGOM, 'Unknown'),
       wbMarkerReq(XWPK)
     ]),
@@ -15344,26 +15344,26 @@ begin
     wbFormIDCk(NAME, 'Base', sigBaseObjects, False, cpNormal, True),
 
     wbStruct(XVL2, 'Volume Data', [
-      { 0} wbUnknown(8),
+      wbByteArray('Reserved', 8),
       { 8} wbFormIDCk('Unknown', [NULL, IMGS]),
       {12} wbFormIDCk('Unknown', [NULL, FOGV]),
-      {16} wbUnknown(4),
+      wbInteger('Reserved', itU32),
       {20} wbFloat,
       {24} wbFloat,
       {28} wbFloat,
       {32} wbFloat,
-      {36} wbUnknown(4),
+      wbInteger('Reserved', itU32),
       {40} wbFloat,
       {44} wbFloat,
       {48} wbFloat,
-      {52} wbUnknown(4),
+      wbInteger('Reserved', itU32),
       {56} wbFloat,
       {60} wbFloat,
       {64} wbFloat,
       {68} wbFloat,
       {72} wbFloat,
       {76} wbFloat,
-      {80} wbUnknown(1),
+      wbInteger('Reserved', itU8),
       {81} wbFloat
     ]),
 
@@ -15435,8 +15435,8 @@ begin
       wbFloat('Near Clip/Cut On'),
       wbFloat('Inner FOV'),             // 5th float value changes designation of meaning based on BASE light type Omnidirection/Spotlight
       wbFloat('Shadow Offset'),
-      wbUnknown(4),
-      wbUnknown(4)
+      wbInteger('Reserved', itU32),
+      wbInteger('Reserved', itU32)
     ], cpNormal, False, nil, 4),
 
     wbFloat(XRDS, 'Radius'),
@@ -15734,7 +15734,7 @@ begin
 
     wbRArray('Light Colors', wbStruct(XLCD, 'Light Color', [
       wbByteRGBA,
-      wbUnknown(5),
+      wbByteArray('Reserved', 5),
       wbUnused(3)
     ])),
 
@@ -15750,7 +15750,7 @@ begin
       wbFormIDCk(HNAM, 'Unknown', [REFR]),
       wbInteger(INAM, 'Unknown', itU16, wbBoolEnum).SetRequired,
       wbFormIDCk(JNAM, 'Unknown', [PKIN]),
-      wbUnknown(LNAM, 4).SetRequired,
+      wbInteger(LNAM, 'Reserved', itU32).SetRequired,
       wbEmpty(XGOM, 'Unknown'),
       wbMarkerReq(XWPK)
     ]),
@@ -16052,7 +16052,7 @@ begin
 
     wbInteger(INCC, 'Interior Cell Count', itU32).SetRequired,                    // Size of some array of 12 bytes elements
 
-    wbUnknown(CHGL)
+    wbInteger(CHGL, 'Internal Count', itU32)
   ], True, nil, cpNormal, True);
 
   {xEdit internal subrecord type}
@@ -16570,7 +16570,7 @@ begin
             wbUnknown
           ])
         ),
-        wbUnknown(INTV),
+        wbInteger(INTV, 'Reserved', itU32),
         wbString(NAM1, 'Model')
       ])
     )
@@ -16945,11 +16945,11 @@ begin
     wbFULL,
     wbDESC(),
     wbGenericModel(True),
-    wbUnknown(XFLG),
+    wbInteger(XFLG, 'Model Flags', itU8, wbModelFlags).IncludeFlag(dfCollapsed, wbCollapseFlags),
     wbStruct(DATA, 'Data', [
       wbInteger(csIncludeCount, itU32, nil, cpBenign).IncludeFlag(dfSkipImplicitEdit),
       wbInteger(csPropertyCount, itU32, nil, cpBenign).IncludeFlag(dfSkipImplicitEdit),
-      wbUnknown(2),
+      wbInteger('Reserved', itU16),
       wbLenString('Name').SetFormater(wbStringEnum([
           'Container_InstanceData',
           'Spaceship_InstanceData',
@@ -16964,7 +16964,7 @@ begin
       wbInteger('Level Tier Scaled Offset', itU8),
       wbFormIDCk('Attach Point', [KYWD, NULL]),
       wbArray('Attach Parent Slots', wbFormIDCk('Keyword', [KYWD, NULL]), -1).IncludeFlag(dfCollapsed, wbCollapseKeywords),
-      wbUnknown(4),
+      wbInteger('Reserved', itU32),
       wbArray('Includes', wbStruct('Include', [
         wbFormIDCk('Mod', [OMOD]),
         wbInteger('Minimum Level', itU8),
@@ -17083,7 +17083,7 @@ begin
     wbFormIDCk(RNAM, 'Reference', sigReferences),
     wbFormIDCk(PNAM, 'Pack-in', [PKIN]),
     wbFormIDCk(LNAM, 'Unknown', sigReferences),
-    wbArray(MNAM,'Unknown', wbUnknown(4), 3)
+    wbArray(MNAM, 'Reserved', wbInteger('Reserved', itU32), 3)
   ]);
 
   {wbRecord(RGDL, 'RGDL', [
@@ -17097,19 +17097,19 @@ begin
       wbRStruct('Scene', [
         wbFormIDCk(SNAM, 'Scene', [SCEN]),
         wbStruct(XNAM, 'Unknown', [
-          wbInteger('Unknown', itS32),
-          wbInteger('Unknown', itS32)
+          wbInteger('X', itS32),
+          wbInteger('Y', itS32)
         ])
       ])
     ),
-    wbUnknown(VNAM)
+    wbInteger(VNAM, 'Reserved', itU32)
   ]);
 
   var wbStaticPart :=
     wbRStructSK([0], 'Part', [
       wbStructSK(ONAM, [0], 'Unknown', [
         wbFormIDCk('Static', [ACTI, ALCH, AMMO, BOOK, CONT, DOOR, FURN, MISC, MSTT, STAT, TERM, WEAP, FLOR]).IncludeFlag(dfUnmappedFormID, wbStarfieldReverseEngineeringIncomplete),
-        wbUnknown(4)
+        wbInteger('Reserved', itU32)
       ]),
       wbStaticPartPlacements
     ], [], cpNormal, True)
@@ -17593,7 +17593,7 @@ begin
         wbFormIDCk('Template Node', [STND]),
         wbVec3PosRotDegrees('Orientation', 'Offset', 'Rotation', 'Ofs:', 'Rot:'),
         wbInteger('Display Case Slot', itU32),
-        wbUnknown(4)
+        wbInteger('Reserved', itU32)
       ])
       .SetSummaryKeyOnValue([0,1,2,3])
       .SetSummaryPrefixSuffixOnValue(0, '[', ']')
@@ -18167,30 +18167,30 @@ begin
     wbRStructsSK('Procedural Object Generation', 'Mask', [0], [
       wbString(FNAM, 'Mask Name', 0, cpNormal, True)
         .SetFormaterOnValue(wbBIOMMaskNameStringEnum),
-      wbUnknown(BNAM, cpNormal, True).SetDefaultEditValue('01 00 00 00'),  //Always 01 00 00 00 if it exists, probably a bool flag to load this mask. Only ever present if the mask is as well.
+      wbInteger(BNAM, 'Mask Present', itU32, wbBoolEnum, cpNormal, True).SetDefaultNativeValue(1),
       wbRArrayS('Objects', wbStructSK(GNAM, [0], 'Object', [
         wbFormIDCk('Pack-In/Ref', [CONT, LVLP, PKIN, REFR]),
         wbStruct('Data', [
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
           wbFloat,
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
+          wbInteger('Reserved', itU32),
           wbFloat,
-          wbUnknown(4),
+          wbInteger('Reserved', itU32),
           wbFloat('Object Density'),
           wbFloat,
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4),
-          wbUnknown(4)
+          wbInteger('Reserved', itU32),
+          wbFloat('Max Range'),
+          wbInteger('Reserved', itU32),
+          wbInteger('Enabled', itU32, wbBoolEnum)
         ])
       ]), cpNormal, True),
       wbStruct(DNAM,'Footprints', [
@@ -18641,7 +18641,7 @@ begin
           wbVec3('Scale'),
           wbFloat, // not listed in inspector
           wbVec3('MaxDist'),
-          wbUnknown(4), // not listed in inspector
+          wbInteger('Reserved', itU32),
           wbInteger('Look At Parent', itU8, wbBoolEnum)
         ])
       ])
@@ -18966,7 +18966,7 @@ begin
       wbStructSK(PPBD, [0], 'Biome', [
         wbFormIDCK('Biome', [BIOM]),
         wbFloat('Chance'),
-        wbUnknown(4),
+        wbInteger('Random Seed', itU32),
         wbFormIDCk('Resource Generation', [NULL, RSGD]).IncludeFlag(dfSummaryExcludeNULL),
         wbArray('Fauna', wbFormIDCk('Fauna', [NPC_]), -1),
         wbArray('Keywords', wbFormIDCk('Keyword', [KYWD]), -1).IncludeFlag(dfCollapsed, wbCollapseKeywords),
@@ -18984,10 +18984,10 @@ begin
         ]).SetSummaryKey([2]),
         wbArray('Unknown',
           wbStruct('Unknown', [
-            wbUnknown(4),
-            wbUnknown(4),
-            wbUnknown(4),
-            wbUnknown(4)
+            wbInteger('Reserved', itU32),
+            wbInteger('Reserved', itU32),
+            wbInteger('Reserved', itU32),
+            wbInteger('Reserved', itU32)
           ]),
         -1)
       ]).SetSummaryKeyOnValue([1, 3, 4, 6])
@@ -19038,7 +19038,7 @@ begin
         wbFloat('Mass (in Earth Masses)', cpNormal, False, 1/5.972E24, 3),
         wbFloat('Radius in km'),
         wbFloat('Surface Gravity'),
-        wbUnknown(4) // all data appears to be stored as a sequence of doubles
+        wbFormIDCk('Orbited By', [PNDT, NULL])
       ]),
       wbStruct(GNAM, 'Galaxy Data', [
         wbInteger('Star System ID', itu32, wbStarIDToStr, wbStrToStarID)
@@ -19047,7 +19047,7 @@ begin
         wbInteger('Planet ID', itu32)
       ]),
       wbStruct(HNAM, 'Unknown', [
-        wbUnknown(4),
+        wbInteger('Slot 0 / Reserved', itU32),
         wbLenString('Spectral Class').IncludeFlag(dfHasZeroTerminator),
         wbLenString('Catalogue ID').IncludeFlag(dfHasZeroTerminator),
         wbLenString('Life').IncludeFlag(dfHasZeroTerminator),
@@ -19064,7 +19064,7 @@ begin
         wbFloat('Inner HZ'),
         wbFloat('Outer HZ'),
         wbFloat('Peri. Angle'),
-        wbUnknown(4),
+        wbInteger('Reserved', itU32),
         wbFloat('Start angle in deg'),
         wbFloat('Year length in days'),
         wbInteger('Asteroids', itu32),
@@ -19394,7 +19394,7 @@ begin
     ])), [
     wbEDID,
     wbBaseFormComponents,
-    wbUnknown(CNAM).IncludeFlag(dfNoCopyAsOverride),  // CK does not copy this on overrides
+    wbInteger(CNAM, 'Format Version', itU32).IncludeFlag(dfNoCopyAsOverride),
     wbInteger(DNAM, 'Edge Size', itU32).IncludeFlag(dfNoCopyAsOverride),  // CK does not copy this on overrides
 
     wbArray(ENAM, 'Surface Patterns', wbFormIDCk('Surface Pattern', [SFPT]).IncludeFlag(dfUnmappedFormID, wbStarfieldReverseEngineeringIncomplete), 65536).IncludeFlag(dfCollapsed, wbCollapseOther),
@@ -19480,7 +19480,7 @@ begin
     wbKeywords,
     wbString(ANAM, 'Name'),
     wbVec3Pos(BNAM, 'System Parsec Location', 'Parsecs'),
-    wbUnknown(ONAM),                                    //related to BGSOrbitalDataComponent_Component
+    wbInteger(ONAM, 'Orbital Data Component', itU32),
     wbInteger(DNAM, 'System ID', itU32),
     wbByteColors(ENAM, 'Color'),
     wbFormIDCk(SNAM, 'Binary Star', [STDT]),
@@ -19758,8 +19758,8 @@ begin
     wbInteger(DATA, 'Unknown', itU32),
     wbRArray('Unknown', wbStructs(DAT2, 'Unknown', 'Unknown', [
       wbFormID('Unknown'),
-      wbUnknown(4),
-      wbUnknown(4)
+      wbInteger('Reserved', itU32),
+      wbInteger('Reserved', itU32)
     ])).IncludeFlag(dfExcludeFromBuildRef)
   ]);
 
@@ -20146,7 +20146,7 @@ begin
     ]),
     wbRStruct('1st Person Model', [
       wbString(MOD4, 'Model FileName'),
-      wbUnknown(MO4C),
+      wbFloat(MO4C, 'Color Remapping Index'),
       wbFLLD,
       wbFloat(MO4S, 'Color Remapping Index')
     ]).IncludeFlag(dfAllowAnyMember),
@@ -20239,7 +20239,7 @@ begin
       wbRArray('Sounds',
         wbStruct(WSLD, 'Sound', [
           wbSoundReference,
-          wbUnknown(4)
+          wbInteger('Reserved', itU32)
         ])
       ).SetCountPath(WSLS)
     ]),
